@@ -796,13 +796,14 @@ function ArenaGame() {
             ctx.globalCompositeOperation = "source-over";
           }
           if (v === p) {
-            ctx.strokeStyle = PAL.cyan;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([6, 5]);
+            const r = Math.max(car.w, car.h) * 0.62;
+            ctx.fillStyle = "rgba(56,160,255,0.18)";
             ctx.beginPath();
-            ctx.ellipse(0, 0, car.w * 0.54, car.h * 0.54, 0, 0, Math.PI * 2);
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(120,190,255,0.35)";
+            ctx.lineWidth = 1.5;
             ctx.stroke();
-            ctx.setLineDash([]);
           }
           ctx.restore();
           if (v === p || v.hp < car.hp * 0.63) {
@@ -1314,14 +1315,6 @@ function ArenaGame() {
           </div>
         )}
       </section>
-      <footer className="game-footer">
-        <div className="ticker">
-          <span>
-            ★ LAST CAR STANDING ★ NO RESPAWNS ★ NO MERCY ★ INSERT COIN ★ SURVIVE THE SCRAP ★ LAST
-            CAR STANDING ★ NO RESPAWNS ★ NO MERCY ★ INSERT COIN ★ SURVIVE THE SCRAP ★
-          </span>
-        </div>
-      </footer>
     </main>
   );
 }

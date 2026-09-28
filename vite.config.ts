@@ -14,11 +14,14 @@ const chromeTarget = CHROME << 16; // lightningcss encodes versions as major << 
 
 export default defineConfig({
   tanstackStart: {
+    // SPA mode: emits a static dist/client/index.html shell (needed for itch.io).
+    spa: { enabled: true },
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
   },
   vite: {
+    base: "./",
     css: {
       transformer: "lightningcss",
       lightningcss: { targets: { chrome: chromeTarget } },

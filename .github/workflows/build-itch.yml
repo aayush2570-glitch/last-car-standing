@@ -1,0 +1,50 @@
+name: Manual Build for itch.io
+
+# Manual only: Actions tab -> "Manual Build for itch.io" -> Run workflow.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      # Builds the SPA and packages it: index.html at the root, relative
+      # asset paths, zipped into releases/.
+      - name: Build itch.io package
+        run: npm run build:itch
+
+      # Upload the FOLDER (not a zip) so GitHub's single zip layer on
+      # download leaves index.html at the root — upload that straight to itch.io.
+      - name: Upload playable game folder
+        uses: actions/upload-artifact@v4
+        with:
+          name: itch-game
+          path: itch-dist
+
+      - name: Find built zip
+        id: find_zip
+        run: echo "zip_path=$(ls releases/*.zip | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Publish latest build as a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-build
+          name: Latest itch.io build
+          body: Manual build. Download the .zip below and upload it directly to itch.io (Kind of project - HTML).
+          make_latest: true
+          files: ${{ steps.find_zip.outputs.zip_path }}
