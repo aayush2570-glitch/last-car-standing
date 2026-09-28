@@ -551,8 +551,8 @@ function ArenaGame() {
         }
         collide(p);
         if ((keys.has("5") || keys.has(" ")) && p.cooldown <= 0) {
-          const tx = p.x + Math.sin(p.angle) * 44,
-            ty = p.y - Math.cos(p.angle) * 44;
+          const tx = p.x + Math.sin(p.angle) * (stats.h * 0.57),
+            ty = p.y - Math.cos(p.angle) * (stats.h * 0.57);
           g.bullets.push({
             x: tx,
             y: ty,
@@ -599,8 +599,8 @@ function ArenaGame() {
         collide(bot);
         if (distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
           const aim = desired + (Math.random() - 0.5) * 0.2;
-          const mx = bot.x + Math.sin(aim) * 37,
-            my = bot.y - Math.cos(aim) * 37;
+          const mx = bot.x + Math.sin(aim) * (carAt(bot.carId).h * 0.5),
+            my = bot.y - Math.cos(aim) * (carAt(bot.carId).h * 0.5);
           g.bullets.push({
             x: mx,
             y: my,
@@ -778,12 +778,12 @@ function ArenaGame() {
           ctx.globalCompositeOperation = "lighter";
           ctx.fillStyle = hexA(v === p ? PAL.cyan : car.color, v === p ? 0.22 : 0.12);
           ctx.beginPath();
-          ctx.ellipse(0, 0, 33, 46, 0, 0, Math.PI * 2);
+          ctx.ellipse(0, 0, car.w * 0.62, car.h * 0.58, 0, 0, Math.PI * 2);
           ctx.fill();
           ctx.globalCompositeOperation = "source-over";
           ctx.fillStyle = "rgba(0,0,0,0.5)";
           ctx.beginPath();
-          ctx.ellipse(4, 8, 23, 33, 0, 0, Math.PI * 2);
+          ctx.ellipse(4, 8, car.w * 0.46, car.h * 0.43, 0, 0, Math.PI * 2);
           ctx.fill();
           if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
           else drawFallbackCar(ctx, car, car.w, car.h);
@@ -791,7 +791,7 @@ function ArenaGame() {
             ctx.globalCompositeOperation = "lighter";
             ctx.fillStyle = "rgba(255,255,255,0.55)";
             ctx.beginPath();
-            ctx.ellipse(0, 0, 23, 37, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, car.w * 0.46, car.h * 0.48, 0, 0, Math.PI * 2);
             ctx.fill();
             ctx.globalCompositeOperation = "source-over";
           }
@@ -800,7 +800,7 @@ function ArenaGame() {
             ctx.lineWidth = 2;
             ctx.setLineDash([6, 5]);
             ctx.beginPath();
-            ctx.ellipse(0, 0, 25, 39, 0, 0, Math.PI * 2);
+            ctx.ellipse(0, 0, car.w * 0.54, car.h * 0.54, 0, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
           }

@@ -1,11 +1,11 @@
-import blackTruck from "@/assets/black_gatling_pickup.png.asset.json";
-import blueTruck from "@/assets/blue_turret_truck.png.asset.json";
-import greenJeep from "@/assets/green_military_jeep.png.asset.json";
-import orangeSportsCar from "@/assets/orange_sports_car.png.asset.json";
-import policeCar from "@/assets/police_car.png.asset.json";
-import purpleCar from "@/assets/purple_futuristic_car.png.asset.json";
-import redMuscleCar from "@/assets/red_muscle_car.png.asset.json";
-import yellowTruck from "@/assets/yellow_turret_truck.png.asset.json";
+import blackTruck from "@/assets/cars/black_gatling_pickup.webp";
+import blueTruck from "@/assets/cars/blue_turret_truck.webp";
+import greenJeep from "@/assets/cars/green_military_jeep.webp";
+import orangeSportsCar from "@/assets/cars/orange_sports_car.webp";
+import policeCar from "@/assets/cars/police_car.webp";
+import purpleCar from "@/assets/cars/purple_futuristic_car.webp";
+import redMuscleCar from "@/assets/cars/red_muscle_car.webp";
+import yellowTruck from "@/assets/cars/yellow_turret_truck.webp";
 
 /**
  * NOTE (Chrome 109): every colour used by the canvas or by inline styles is a plain
@@ -46,7 +46,7 @@ export type Car = {
   damage: number;
   armor: number;
   color: string;
-  /** sprite size used in the arena (px) */
+  /** sprite size used in the arena (px); width follows the artwork's real aspect ratio */
   w: number;
   h: number;
 };
@@ -55,106 +55,106 @@ export const cars: Car[] = [
   {
     name: "Gatling",
     model: "BLACK GATLING PICKUP",
-    url: blackTruck.url,
+    url: blackTruck,
     hp: 112,
     speed: 72,
     fireRate: 81,
     damage: 81,
     armor: 56,
     color: "#b9c4e8",
-    w: 48,
-    h: 77,
+    w: 47,
+    h: 80,
   },
   {
     name: "Blue Turret",
     model: "ARMORED SUPPORT",
-    url: blueTruck.url,
+    url: blueTruck,
     hp: 148,
     speed: 49,
     fireRate: 54,
     damage: 70,
     armor: 93,
     color: "#4da3ff",
-    w: 48,
-    h: 77,
+    w: 46,
+    h: 80,
   },
   {
     name: "Military Jeep",
     model: "FIELD COMMANDER",
-    url: greenJeep.url,
+    url: greenJeep,
     hp: 125,
     speed: 65,
     fireRate: 66,
     damage: 64,
     armor: 76,
     color: "#7dff5a",
-    w: 48,
-    h: 77,
+    w: 68,
+    h: 80,
   },
   {
     name: "Street Runner",
     model: "ORANGE SPORTS CAR",
-    url: orangeSportsCar.url,
+    url: orangeSportsCar,
     hp: 86,
     speed: 96,
     fireRate: 61,
     damage: 55,
     armor: 41,
     color: "#ff9a2e",
-    w: 43,
-    h: 72,
+    w: 48,
+    h: 80,
   },
   {
     name: "Interceptor",
     model: "POLICE PURSUIT",
-    url: policeCar.url,
+    url: policeCar,
     hp: 115,
     speed: 72,
     fireRate: 91,
     damage: 59,
     armor: 68,
     color: "#39d0ff",
-    w: 48,
-    h: 77,
+    w: 62,
+    h: 80,
   },
   {
     name: "Phantom",
     model: "FUTURE DIVISION",
-    url: purpleCar.url,
+    url: purpleCar,
     hp: 96,
     speed: 91,
     fireRate: 86,
     damage: 63,
     armor: 49,
     color: "#c26bff",
-    w: 48,
-    h: 77,
+    w: 56,
+    h: 80,
   },
   {
     name: "Redline",
     model: "RED MUSCLE CAR",
-    url: redMuscleCar.url,
+    url: redMuscleCar,
     hp: 139,
     speed: 70,
     fireRate: 62,
     damage: 87,
     armor: 78,
     color: "#ff4b5c",
-    w: 48,
-    h: 77,
+    w: 67,
+    h: 80,
   },
   {
     name: "Heavy Metal",
     model: "YELLOW TURRET TRUCK",
-    url: yellowTruck.url,
+    url: yellowTruck,
     hp: 158,
     speed: 45,
     fireRate: 53,
     damage: 97,
     armor: 95,
     color: "#ffe23d",
-    w: 48,
-    h: 77,
+    w: 46,
+    h: 80,
   },
 ];
 

@@ -232,8 +232,8 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 @keyframes tile-blink { 50% { border-color: #fff; } }
 .tile-index { position: absolute; left: 5px; top: 3px; font: 15px/1 "VT323", monospace; color: #8b7ad0; }
 .tile-flag { position: absolute; right: 4px; top: 3px; padding: 2px 4px; font: 7px/1 "Press Start 2P", monospace; color: #0b0620; background: var(--c); }
-.tile-art { display: flex; align-items: center; justify-content: center; width: 100%; height: 66px; }
-.tile-art img { max-height: 64px; max-width: 100%; width: auto; height: auto; object-fit: contain; }
+.tile-art { display: flex; align-items: center; justify-content: center; width: 100%; height: 84px; }
+.tile-art img { max-height: 82px; max-width: 100%; width: auto; height: auto; object-fit: contain; }
 .tile-swatch { display: block; width: 26px; height: 52px; background: var(--c); border: 3px solid #000; }
 .tile-name { font: 17px/1 "VT323", monospace; text-transform: uppercase; letter-spacing: .04em; text-align: center; }
 .tile-rank { font: 8px/1 "Press Start 2P", monospace; color: var(--c); }
