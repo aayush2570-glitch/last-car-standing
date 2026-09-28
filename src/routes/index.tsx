@@ -716,37 +716,8 @@ function ArenaGame() {
       ctx.save();
       ctx.translate(ox, oy);
       ctx.scale(zoom, zoom);
-      // floor + neon grid (only draw what the camera can see)
-      ctx.fillStyle = PAL.floor;
-      ctx.fillRect(0, 0, WORLD.width, WORLD.height);
-      const vx0 = clamp(Math.floor(-ox / zoom / 80) * 80, 0, WORLD.width),
-        vx1 = clamp((width - ox) / zoom + 80, 0, WORLD.width);
-      const vy0 = clamp(Math.floor(-oy / zoom / 80) * 80, 0, WORLD.height),
-        vy1 = clamp((height - oy) / zoom + 80, 0, WORLD.height);
-      ctx.strokeStyle = PAL.grid;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let x = vx0; x <= vx1; x += 80) {
-        ctx.moveTo(x, vy0);
-        ctx.lineTo(x, vy1);
-      }
-      for (let y = vy0; y <= vy1; y += 80) {
-        ctx.moveTo(vx0, y);
-        ctx.lineTo(vx1, y);
-      }
-      ctx.stroke();
-      ctx.setLineDash([16, 14]);
-      ctx.lineWidth = 4;
-      ctx.strokeStyle = PAL.yellow;
-      ctx.globalAlpha = 0.55;
-      for (const y of [500, 1010]) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(WORLD.width, y);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
+      // polished grey tile floor (pre-rendered once, then just blitted)
+      ctx.drawImage(getFloor(), 0, 0);
       // buildings
       for (const [x, y, w, h] of blocks) {
         ctx.fillStyle = PAL.shadow;
@@ -799,7 +770,8 @@ function ArenaGame() {
           }
           if (v === p) {
             // yellow "YOU" tag above the player's car
-            const tx = v.x, ty = v.y - 66;
+            const tx = v.x,
+              ty = v.y - 66;
             ctx.fillStyle = "#ffe23d";
             ctx.fillRect(tx - 17, ty - 8, 34, 16);
             ctx.beginPath();
@@ -1316,6 +1288,91 @@ function ArenaGame() {
       </section>
     </main>
   );
+}
+
+let floorCanvas: HTMLCanvasElement | null = null;
+
+/** Builds the arena floor once: slate-grey polished tiles, soft wear, worn lane paint. */
+function getFloor(): HTMLCanvasElement {
+  if (floorCanvas) return floorCanvas;
+  const c = document.createElement("canvas");
+  c.width = WORLD.width;
+  c.height = WORLD.height;
+  const f = c.getContext("2d")!;
+  let seed = 90210;
+  const rnd = () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let z = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z;
+    return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
+  };
+  const T = 80;
+  f.fillStyle = "#3a3e48";
+  f.fillRect(0, 0, c.width, c.height);
+  for (let y = 0; y < c.height; y += T) {
+    for (let x = 0; x < c.width; x += T) {
+      // each tile gets a slightly different grey so the surface feels laid, not flat
+      const d = Math.round((rnd() - 0.5) * 14);
+      f.fillStyle = `rgb(${58 + d},${62 + d},${72 + d})`;
+      f.fillRect(x, y, T, T);
+      // soft top-left sheen
+      const g = f.createLinearGradient(x, y, x + T, y + T);
+      g.addColorStop(0, "rgba(255,255,255,0.07)");
+      g.addColorStop(0.5, "rgba(255,255,255,0)");
+      g.addColorStop(1, "rgba(0,0,0,0.10)");
+      f.fillStyle = g;
+      f.fillRect(x, y, T, T);
+      // grit
+      for (let i = 0; i < 12; i++) {
+        f.fillStyle = rnd() > 0.5 ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.12)";
+        f.fillRect(x + rnd() * T, y + rnd() * T, 1 + rnd() * 1.5, 1 + rnd() * 1.5);
+      }
+      // bevelled seams: light edge on top/left, dark grout on bottom/right
+      f.fillStyle = "rgba(255,255,255,0.09)";
+      f.fillRect(x, y, T, 1);
+      f.fillRect(x, y, 1, T);
+      f.fillStyle = "rgba(0,0,0,0.35)";
+      f.fillRect(x, y + T - 2, T, 2);
+      f.fillRect(x + T - 2, y, 2, T);
+    }
+  }
+  // oil / wear stains
+  for (let i = 0; i < 40; i++) {
+    const sx = rnd() * c.width,
+      sy = rnd() * c.height,
+      r = 30 + rnd() * 70;
+    const g = f.createRadialGradient(sx, sy, 0, sx, sy, r);
+    g.addColorStop(0, "rgba(10,12,20,0.16)");
+    g.addColorStop(1, "rgba(10,12,20,0)");
+    f.fillStyle = g;
+    f.fillRect(sx - r, sy - r, r * 2, r * 2);
+  }
+  // worn lane paint
+  f.setLineDash([26, 20]);
+  f.lineWidth = 5;
+  f.strokeStyle = "rgba(240,205,90,0.5)";
+  for (const y of [500, 1010]) {
+    f.beginPath();
+    f.moveTo(0, y);
+    f.lineTo(c.width, y);
+    f.stroke();
+  }
+  f.setLineDash([]);
+  // soft vignette toward the walls
+  const vg = f.createRadialGradient(
+    c.width / 2,
+    c.height / 2,
+    Math.min(c.width, c.height) * 0.35,
+    c.width / 2,
+    c.height / 2,
+    Math.max(c.width, c.height) * 0.75,
+  );
+  vg.addColorStop(0, "rgba(0,0,0,0)");
+  vg.addColorStop(1, "rgba(0,0,0,0.35)");
+  f.fillStyle = vg;
+  f.fillRect(0, 0, c.width, c.height);
+  floorCanvas = c;
+  return c;
 }
 
 /** "#rrggbb" + alpha → "rgba(r,g,b,a)". Plain rgba() keeps canvas and CSS happy on old Chrome. */
