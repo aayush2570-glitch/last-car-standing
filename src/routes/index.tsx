@@ -1,263 +1,1333 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Crosshair, Heart, MoveUpRight, Shield, Trophy, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import blackTruck from "@/assets/black_gatling_pickup.png.asset.json";
-import blueTruck from "@/assets/blue_turret_truck.png.asset.json";
-import greenJeep from "@/assets/green_military_jeep.png.asset.json";
-import orangeSportsCar from "@/assets/orange_sports_car.png.asset.json";
-import policeCar from "@/assets/police_car.png.asset.json";
-import purpleCar from "@/assets/purple_futuristic_car.png.asset.json";
-import redMuscleCar from "@/assets/red_muscle_car.png.asset.json";
-import yellowTruck from "@/assets/yellow_turret_truck.png.asset.json";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Crosshair,
+  Heart,
+  Play,
+  Shield,
+  Trophy,
+  Volume2,
+  VolumeX,
+  Zap,
+  Gauge,
+  Swords,
+} from "lucide-react";
+import { PAL, cars, carAt, drawFallbackCar, getSprites, spriteReady, type Car } from "@/game/cars";
+import { Fx, Sfx, drawTracer } from "@/game/fx";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
       { title: "Last Car Standing — Combat Arena" },
-      { name: "description", content: "Choose your ride. Enter the arena. Be the last car standing." },
+      {
+        name: "description",
+        content: "Choose your ride. Enter the arena. Be the last car standing.",
+      },
       { property: "og:title", content: "Last Car Standing — Combat Arena" },
-      { property: "og:description", content: "Choose your ride and fight to survive in a top-down car combat arena." },
+      {
+        property: "og:description",
+        content: "Choose your ride and fight to survive in a top-down car combat arena.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
+    ],
+    links: [
+      { rel: "preconnect", href: "https://fonts.googleapis.com" },
+      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap",
+      },
     ],
   }),
   component: ArenaGame,
 });
 
-const cars = [
-  { name: "Gatling", model: "BLACK GATLING PICKUP", asset: blackTruck, hp: 112, speed: 72, fireRate: 81, damage: 81, armor: 56, color: "var(--car-black)" },
-  { name: "Blue Turret", model: "ARMORED SUPPORT", asset: blueTruck, hp: 148, speed: 49, fireRate: 54, damage: 70, armor: 93, color: "var(--car-blue)" },
-  { name: "Military Jeep", model: "FIELD COMMANDER", asset: greenJeep, hp: 125, speed: 65, fireRate: 66, damage: 64, armor: 76, color: "var(--car-green)" },
-  { name: "Street Runner", model: "ORANGE SPORTS CAR", asset: orangeSportsCar, hp: 86, speed: 96, fireRate: 61, damage: 55, armor: 41, color: "var(--car-orange)" },
-  { name: "Interceptor", model: "POLICE PURSUIT", asset: policeCar, hp: 115, speed: 72, fireRate: 91, damage: 59, armor: 68, color: "var(--car-blue)" },
-  { name: "Phantom", model: "FUTURE DIVISION", asset: purpleCar, hp: 96, speed: 91, fireRate: 86, damage: 63, armor: 49, color: "var(--car-violet)" },
-  { name: "Redline", model: "RED MUSCLE CAR", asset: redMuscleCar, hp: 139, speed: 70, fireRate: 62, damage: 87, armor: 78, color: "var(--car-red)" },
-  { name: "Heavy Metal", model: "YELLOW TURRET TRUCK", asset: yellowTruck, hp: 158, speed: 45, fireRate: 53, damage: 97, armor: 95, color: "var(--car-yellow)" },
-] as const;
+/* ───────────────────────────── types & world ───────────────────────────── */
 
-type Vehicle = { x: number; y: number; angle: number; hp: number; alive: boolean; cooldown: number; bot: boolean; drift: number; carId: number; hit: number };
-type Projectile = { x: number; y: number; vx: number; vy: number; owner: Vehicle; life: number; damage: number };
+type Vehicle = {
+  x: number;
+  y: number;
+  angle: number;
+  hp: number;
+  alive: boolean;
+  cooldown: number;
+  bot: boolean;
+  drift: number;
+  strafe: number;
+  carId: number;
+  hit: number;
+};
+type Projectile = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  owner: Vehicle;
+  life: number;
+  damage: number;
+};
+type Dot = { x: number; y: number; me: boolean };
+type Game = {
+  player: Vehicle;
+  cars: Vehicle[];
+  bullets: Projectile[];
+  started: number;
+  lastHud: number;
+  kills: number;
+  over: { won: boolean; position: number; t: number } | null;
+  trail: number;
+};
+type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
+type Show = {
+  carId: number;
+  enter: number;
+  t: number;
+  heading: number;
+  cooldown: number;
+  burstLeft: number;
+  burstTimer: number;
+  recoil: number;
+  bullets: ShowBullet[];
+  hits: number[];
+  score: number;
+};
+
 const WORLD = { width: 2400, height: 1720 };
-const blocks = [
-  [370, 260, 180, 142], [720, 235, 240, 100], [1290, 230, 145, 195], [1810, 270, 220, 126],
-  [245, 680, 260, 104], [885, 620, 130, 230], [1530, 655, 260, 105], [1990, 690, 138, 225],
-  [410, 1120, 170, 220], [1010, 1150, 290, 115], [1550, 1090, 125, 244], [1870, 1180, 270, 106],
-  [745, 935, 105, 72], [1380, 940, 100, 75], [1100, 400, 75, 72], [580, 900, 80, 72],
+const TOTAL = 12;
+const blocks: [number, number, number, number][] = [
+  [370, 260, 180, 142],
+  [720, 235, 240, 100],
+  [1290, 230, 145, 195],
+  [1810, 270, 220, 126],
+  [245, 680, 260, 104],
+  [885, 620, 130, 230],
+  [1530, 655, 260, 105],
+  [1990, 690, 138, 225],
+  [410, 1120, 170, 220],
+  [1010, 1150, 290, 115],
+  [1550, 1090, 125, 244],
+  [1870, 1180, 270, 106],
+  [745, 935, 105, 72],
+  [1380, 940, 100, 75],
+  [1100, 400, 75, 72],
+  [580, 900, 80, 72],
 ];
+const TARGETS = 7;
+
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const shotInterval = (c: Car) => (1 - c.fireRate / 140) * 0.53 + 0.14;
+const rating = (c: Car) =>
+  Math.round(((c.hp / 160) * 100 + c.speed + c.fireRate + c.damage + c.armor) / 5);
+const rank = (r: number) => (r >= 76 ? "S" : r >= 70 ? "A" : r >= 64 ? "B" : "C");
+const fmtTime = (s: number) =>
+  `${Math.floor(s / 60)
+    .toString()
+    .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
+
+/* ───────────────────────────── component ───────────────────────────── */
 
 function ArenaGame() {
   const [selected, setSelected] = useState(0);
   const [mode, setMode] = useState<"select" | "playing" | "result">("select");
-  const [hud, setHud] = useState({ hp: 100, alive: 12, kills: 0, time: 0 });
-  const [result, setResult] = useState({ won: false, position: 12, xp: 0 });
+  const [hud, setHud] = useState<{
+    hp: number;
+    alive: number;
+    kills: number;
+    time: number;
+    dots: Dot[];
+  }>({ hp: 100, alive: TOTAL, kills: 0, time: 0, dots: [] });
+  const [result, setResult] = useState({ won: false, position: TOTAL, xp: 0 });
   const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [broken, setBroken] = useState<Record<number, boolean>>({});
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gameRef = useRef<{ player: Vehicle; cars: Vehicle[]; bullets: Projectile[]; keys: Set<string>; started: number; lastHud: number; kills: number; images: HTMLImageElement[] } | null>(null);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const gameRef = useRef<Game | null>(null);
+  const keysRef = useRef<Set<string>>(new Set());
+  const fxRef = useRef<Fx>(new Fx());
+  const sfxRef = useRef<Sfx>(new Sfx());
+  const showRef = useRef<Show>({
+    carId: 0,
+    enter: 0,
+    t: 0,
+    heading: 0,
+    cooldown: 0.4,
+    burstLeft: 0,
+    burstTimer: 1.1,
+    recoil: 0,
+    bullets: [],
+    hits: Array(TARGETS).fill(0) as number[],
+    score: 0,
+  });
   const modeRef = useRef(mode);
   const pausedRef = useRef(paused);
-  useEffect(() => { modeRef.current = mode; }, [mode]);
-  useEffect(() => { pausedRef.current = paused; }, [paused]);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+  const startRef = useRef<() => void>(() => {});
 
-  const startMatch = useCallback(() => {
-    const playerCar = cars[selected];
-    const player: Vehicle = { x: 1200, y: 860, angle: -Math.PI / 2, hp: playerCar.hp, alive: true, cooldown: 0, bot: false, drift: 0, carId: selected, hit: 0 };
-    const rivals: Vehicle[] = [];
-    for (let i = 0; i < 11; i++) {
-      let x = 170 + Math.random() * 2060, y = 160 + Math.random() * 1400;
-      if (Math.hypot(x - player.x, y - player.y) < 390) { x = 220 + i * 175; y = i % 2 ? 340 : 1370; }
-      rivals.push({ x, y, angle: Math.random() * Math.PI * 2, hp: cars[(i + selected + 1) % cars.length].hp, alive: true, cooldown: Math.random() * 1.8, bot: true, drift: Math.random() * 5, carId: (i + selected + 1) % cars.length, hit: 0 });
-    }
-    const images = cars.map(car => { const img = new Image(); img.src = car.asset.url; return img; });
-    gameRef.current = { player, cars: [player, ...rivals], bullets: [], keys: new Set(), started: performance.now(), lastHud: 0, kills: 0, images };
-    setHud({ hp: playerCar.hp, alive: 12, kills: 0, time: 0 }); setPaused(false); setMode("playing");
-  }, [selected]);
-
-  const finishMatch = useCallback((won: boolean, position: number) => {
-    const g = gameRef.current;
-    const xp = won ? 750 : Math.max(80, (12 - position) * 90 + 100);
-    setResult({ won, position, xp });
-    setMode("result");
+  const setModeSync = useCallback((m: "select" | "playing" | "result") => {
+    modeRef.current = m;
+    if (m === "select") fxRef.current = new Fx(); // drop arena particles so they don't leak into the garage
+    setMode(m);
   }, []);
 
+  const startMatch = useCallback(() => {
+    const idx = selectedRef.current;
+    const playerCar = carAt(idx);
+    const player: Vehicle = {
+      x: 1200,
+      y: 860,
+      angle: -Math.PI / 2,
+      hp: playerCar.hp,
+      alive: true,
+      cooldown: 0,
+      bot: false,
+      drift: 0,
+      strafe: 0,
+      carId: idx,
+      hit: 0,
+    };
+    const rivals: Vehicle[] = [];
+    for (let i = 0; i < TOTAL - 1; i++) {
+      let x = 170 + Math.random() * 2060,
+        y = 160 + Math.random() * 1400;
+      if (Math.hypot(x - player.x, y - player.y) < 390) {
+        x = 220 + i * 175;
+        y = i % 2 ? 340 : 1370;
+      }
+      const id = (i + idx + 1) % cars.length;
+      rivals.push({
+        x,
+        y,
+        angle: Math.random() * Math.PI * 2,
+        hp: carAt(id).hp,
+        alive: true,
+        cooldown: Math.random() * 1.8,
+        bot: true,
+        drift: Math.random() * 5,
+        strafe: 0,
+        carId: id,
+        hit: 0,
+      });
+    }
+    fxRef.current = new Fx();
+    gameRef.current = {
+      player,
+      cars: [player, ...rivals],
+      bullets: [],
+      started: performance.now(),
+      lastHud: 0,
+      kills: 0,
+      over: null,
+      trail: 0,
+    };
+    keysRef.current.clear();
+    pausedRef.current = false;
+    setHud({ hp: playerCar.hp, alive: TOTAL, kills: 0, time: 0, dots: [] });
+    setPaused(false);
+    setModeSync("playing");
+    sfxRef.current.blip();
+  }, [setModeSync]);
+  startRef.current = startMatch;
+
+  const finishMatch = useCallback(
+    (won: boolean, position: number) => {
+      const xp = won ? 750 : Math.max(80, (TOTAL - position) * 90 + 100);
+      setResult({ won, position, xp });
+      setModeSync("result");
+    },
+    [setModeSync],
+  );
+
+  const pick = useCallback((i: number) => {
+    setSelected(((i % cars.length) + cars.length) % cars.length);
+    sfxRef.current.blip();
+  }, []);
+
+  useEffect(() => {
+    pausedRef.current = paused;
+  }, [paused]);
+  useEffect(() => {
+    sfxRef.current.muted = muted;
+  }, [muted]);
+
+  /* garage swap animation: the newly picked car "drives in" onto the turntable */
+  useEffect(() => {
+    const s = showRef.current;
+    s.carId = selected;
+    s.enter = 0;
+    s.bullets = [];
+    s.burstLeft = 0;
+    s.burstTimer = 1.4;
+    s.score = 0;
+    const a = anchorRef.current,
+      c = canvasRef.current;
+    if (a && c) {
+      const ar = a.getBoundingClientRect(),
+        cr = c.getBoundingClientRect();
+      const fx = fxRef.current,
+        cx = ar.left - cr.left + ar.width / 2,
+        cy = ar.top - cr.top + ar.height / 2;
+      for (let i = 0; i < 8; i++)
+        fx.dust(cx - ar.width * 0.35 + Math.random() * 40, cy + (Math.random() - 0.5) * 60);
+    }
+  }, [selected]);
+
+  /* ───────────────────────── render / simulation loop ───────────────────────── */
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    const sprites = getSprites();
     let frame = 0;
     let previous = performance.now();
-    let resizeObserver: ResizeObserver | null = null;
-    let width = 1, height = 1, pixelRatio = 1;
+    let width = 1,
+      height = 1;
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
-      pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-      width = rect.width; height = rect.height;
-      canvas.width = Math.round(width * pixelRatio); canvas.height = Math.round(height * pixelRatio);
-      ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      width = Math.max(1, rect.width);
+      height = Math.max(1, rect.height);
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     };
-    resizeObserver = new ResizeObserver(resize); resizeObserver.observe(canvas); resize();
-    const style = getComputedStyle(document.documentElement);
-    const color = (name: string) => style.getPropertyValue(name).trim();
-    const draw = (now: number) => {
-      const dt = Math.min((now - previous) / 1000, 0.04); previous = now;
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resize) : null;
+    ro?.observe(canvas);
+    resize();
+    window.addEventListener("resize", resize);
+
+    /* ---------- showroom (garage) ---------- */
+    const stepShowroom = (dt: number) => {
+      const s = showRef.current,
+        fx = fxRef.current,
+        keys = keysRef.current;
+      const car = carAt(s.carId);
+      s.t += dt;
+      s.enter = Math.min(1, s.enter + dt / 0.55);
+      s.recoil = Math.max(0, s.recoil - dt * 7);
+      s.heading = Math.sin(s.t * 0.75) * 0.5;
+      for (let i = 0; i < s.hits.length; i++) s.hits[i] = Math.max(0, (s.hits[i] as number) - dt);
+      const holding = keys.has(" ") || keys.has("5") || keys.has("testfire");
+      s.burstTimer -= dt;
+      if (s.burstTimer <= 0 && s.burstLeft <= 0 && !holding) {
+        s.burstLeft = 9;
+        s.burstTimer = 2.6;
+      }
+      s.cooldown -= dt;
+      if ((holding || s.burstLeft > 0) && s.cooldown <= 0 && s.enter >= 1) {
+        if (!holding) s.burstLeft--;
+        s.cooldown = shotInterval(car) * 0.8;
+        const g = showGeometry();
+        const mx = g.cx + Math.sin(s.heading) * g.carH * 0.56,
+          my = g.cy - Math.cos(s.heading) * g.carH * 0.56;
+        s.bullets.push({
+          x: mx,
+          y: my,
+          vx: Math.sin(s.heading) * 1000,
+          vy: -Math.cos(s.heading) * 1000,
+          life: 1.2,
+        });
+        fx.muzzle(mx, my, s.heading, car.color);
+        fx.shell(
+          g.cx + Math.sin(s.heading) * g.carH * 0.15,
+          g.cy - Math.cos(s.heading) * g.carH * 0.15,
+          s.heading,
+        );
+        s.recoil = 1;
+        sfxRef.current.shot(0.8 + car.fireRate / 200);
+      }
+      const g = showGeometry();
+      for (const b of s.bullets) {
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        b.life -= dt;
+        if (b.y <= g.targetY + g.tSize / 2) {
+          const ti = Math.round((b.x - (g.cx - g.spread)) / ((g.spread * 2) / (TARGETS - 1)));
+          const hitTarget =
+            ti >= 0 &&
+            ti < TARGETS &&
+            Math.abs(b.x - (g.cx - g.spread + ti * ((g.spread * 2) / (TARGETS - 1)))) <
+              g.tSize * 0.6;
+          if (hitTarget) {
+            s.hits[ti] = 0.16;
+            s.score++;
+            sfxRef.current.hit();
+          }
+          fx.impact(
+            b.x,
+            g.targetY + g.tSize / 2,
+            Math.atan2(b.vx, -b.vy),
+            hitTarget ? PAL.white : car.color,
+            hitTarget ? 12 : 6,
+          );
+          b.life = 0;
+        }
+      }
+      s.bullets = s.bullets.filter((b) => b.life > 0);
+    };
+
+    const showGeometry = () => {
+      const a = anchorRef.current;
+      let cx = width / 2,
+        cy = height / 2,
+        w = Math.min(width, 520),
+        h = Math.min(height, 520);
+      if (a) {
+        const ar = a.getBoundingClientRect(),
+          cr = canvas.getBoundingClientRect();
+        cx = ar.left - cr.left + ar.width / 2;
+        cy = ar.top - cr.top + ar.height / 2;
+        w = ar.width;
+        h = ar.height;
+      }
+      const size = Math.max(160, Math.min(w, h));
+      const car = carAt(showRef.current.carId);
+      const carH = size * 0.5;
+      const tSize = Math.max(16, size * 0.085);
+      return {
+        cx,
+        cy,
+        size,
+        carH,
+        carW: carH * (car.w / car.h),
+        R: size * 0.4,
+        targetY: cy - h / 2 + tSize * 0.9,
+        tSize,
+        spread: Math.min(w * 0.42, size * 0.62),
+      };
+    };
+
+    const drawGrid = (t: number, scroll: number, alpha: number) => {
+      const step = 64,
+        off = (t * scroll) % step;
+      ctx.strokeStyle = PAL.grid;
+      ctx.globalAlpha = alpha;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = -step + off; x < width + step; x += step) {
+        ctx.moveTo(Math.round(x) + 0.5, 0);
+        ctx.lineTo(Math.round(x) + 0.5, height);
+      }
+      for (let y = -step + off; y < height + step; y += step) {
+        ctx.moveTo(0, Math.round(y) + 0.5);
+        ctx.lineTo(width, Math.round(y) + 0.5);
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    const renderShowroom = () => {
+      const s = showRef.current,
+        fx = fxRef.current;
+      const car = carAt(s.carId);
+      const g = showGeometry();
+      // backdrop
+      const bg = ctx.createLinearGradient(0, 0, 0, height);
+      bg.addColorStop(0, "#0b0620");
+      bg.addColorStop(0.55, "#1a0d40");
+      bg.addColorStop(1, "#2a0f52");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, width, height);
+      drawGrid(s.t, 14, 0.55);
+      // spotlight tinted with the car colour
+      ctx.globalCompositeOperation = "lighter";
+      const glow = ctx.createRadialGradient(g.cx, g.cy, 10, g.cx, g.cy, g.size * 0.95);
+      glow.addColorStop(0, hexA(car.color, 0.34));
+      glow.addColorStop(0.55, hexA(car.color, 0.08));
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = glow;
+      ctx.fillRect(g.cx - g.size, g.cy - g.size, g.size * 2, g.size * 2);
+      ctx.globalCompositeOperation = "source-over";
+
+      // turntable
+      ctx.save();
+      ctx.translate(g.cx, g.cy);
+      ctx.fillStyle = "#120a30";
+      ctx.beginPath();
+      ctx.arc(0, 0, g.R, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = PAL.magenta;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(0, 0, g.R, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.rotate(s.t * 0.4);
+      ctx.strokeStyle = PAL.yellow;
+      ctx.lineWidth = 9;
+      ctx.setLineDash([g.R * 0.16, g.R * 0.16]);
+      ctx.beginPath();
+      ctx.arc(0, 0, g.R * 0.9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.rotate(-s.t * 0.9);
+      ctx.strokeStyle = PAL.cyan;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 10]);
+      ctx.beginPath();
+      ctx.arc(0, 0, g.R * 0.7, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+
+      // targets
+      for (let i = 0; i < TARGETS; i++) {
+        const hit = (s.hits[i] as number) > 0;
+        const tx = g.cx - g.spread + i * ((g.spread * 2) / (TARGETS - 1)),
+          ty = g.targetY + (hit ? 3 : 0),
+          z = g.tSize;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(tx - z / 2 + 3, ty - z / 2 + 3, z, z);
+        ctx.fillStyle = hit ? PAL.white : PAL.magenta;
+        ctx.fillRect(tx - z / 2, ty - z / 2, z, z);
+        ctx.fillStyle = hit ? PAL.yellow : PAL.white;
+        ctx.fillRect(tx - z * 0.33, ty - z * 0.33, z * 0.66, z * 0.66);
+        ctx.fillStyle = hit ? PAL.white : PAL.cyan;
+        ctx.fillRect(tx - z * 0.17, ty - z * 0.17, z * 0.34, z * 0.34);
+      }
+
+      // car (drives in on swap)
+      const e = 1 - Math.pow(1 - s.enter, 3);
+      const rc = s.recoil * s.recoil;
+      ctx.save();
+      ctx.translate(
+        g.cx + (1 - e) * -g.size * 0.9 - Math.sin(s.heading) * rc * 7,
+        g.cy + Math.cos(s.heading) * rc * 7,
+      );
+      ctx.rotate(s.heading + (1 - e) * -1.3);
+      ctx.globalAlpha = 0.25 + 0.75 * e;
+      ctx.fillStyle = "rgba(0,0,0,0.5)";
+      ctx.beginPath();
+      ctx.ellipse(8, 12, g.carW * 0.55, g.carH * 0.52, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = hexA(car.color, 0.22);
+      ctx.beginPath();
+      ctx.ellipse(0, 0, g.carW * 0.78, g.carH * 0.66, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalCompositeOperation = "source-over";
+      const img = sprites[s.carId];
+      if (spriteReady(img)) ctx.drawImage(img, -g.carW / 2, -g.carH / 2, g.carW, g.carH);
+      else drawFallbackCar(ctx, car, g.carW, g.carH);
+      ctx.restore();
+
+      // bullets + particles
+      for (const b of s.bullets) drawTracer(ctx, b.x, b.y, b.vx, b.vy, car.color);
+      fx.draw(ctx);
+    };
+
+    /* ---------- arena (gameplay) ---------- */
+    const step = (dt: number, now: number) => {
       const g = gameRef.current;
-      const active = g && modeRef.current === "playing" && !pausedRef.current;
-      if (active) {
-        const p = g.player; const stats = cars[p.carId];
-        const keys = g.keys;
-        const forward = Number(keys.has("w") || keys.has("arrowup")) - Number(keys.has("s") || keys.has("arrowdown"));
-        const side = Number(keys.has("d") || keys.has("arrowright")) - Number(keys.has("a") || keys.has("arrowleft"));
+      if (!g) return;
+      const fx = fxRef.current,
+        sfx = sfxRef.current,
+        keys = keysRef.current;
+      const p = g.player,
+        stats = carAt(p.carId);
+      const canDrive = p.alive && !g.over;
+      if (canDrive) {
+        const forward =
+          Number(keys.has("w") || keys.has("arrowup")) -
+          Number(keys.has("s") || keys.has("arrowdown"));
+        const side =
+          Number(keys.has("d") || keys.has("arrowright")) -
+          Number(keys.has("a") || keys.has("arrowleft"));
         if (forward || side) {
           const target = Math.atan2(side, -forward);
-          let delta = ((target - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+          const delta = ((target - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           p.angle += delta * Math.min(1, dt * 4.2);
           p.x += Math.sin(p.angle) * (stats.speed * 2.15) * dt;
           p.y -= Math.cos(p.angle) * (stats.speed * 2.15) * dt;
+          g.trail -= dt;
+          if (g.trail <= 0) {
+            g.trail = 0.05;
+            fx.dust(p.x - Math.sin(p.angle) * 32, p.y + Math.cos(p.angle) * 32);
+          }
         }
-        p.x = Math.max(65, Math.min(WORLD.width - 65, p.x)); p.y = Math.max(65, Math.min(WORLD.height - 65, p.y));
+        collide(p);
         if ((keys.has("5") || keys.has(" ")) && p.cooldown <= 0) {
-          const tx = p.x + Math.sin(p.angle) * 44, ty = p.y - Math.cos(p.angle) * 44;
-          g.bullets.push({ x: tx, y: ty, vx: Math.sin(p.angle) * 570, vy: -Math.cos(p.angle) * 570, owner: p, life: 2.2, damage: stats.damage * 0.16 });
-          p.cooldown = (1 - stats.fireRate / 140) * 0.53 + 0.14;
+          const tx = p.x + Math.sin(p.angle) * 44,
+            ty = p.y - Math.cos(p.angle) * 44;
+          g.bullets.push({
+            x: tx,
+            y: ty,
+            vx: Math.sin(p.angle) * 570,
+            vy: -Math.cos(p.angle) * 570,
+            owner: p,
+            life: 2.2,
+            damage: stats.damage * 0.16,
+          });
+          p.cooldown = shotInterval(stats);
+          fx.muzzle(tx, ty, p.angle, PAL.friendly);
+          fx.shell(p.x + Math.sin(p.angle) * 14, p.y - Math.cos(p.angle) * 14, p.angle);
+          sfx.shot(0.8 + stats.fireRate / 200);
         }
-        for (const bot of g.cars.slice(1)) {
-          if (!bot.alive) continue;
-          bot.cooldown -= dt;
-          const targets = g.cars.filter(x => x.alive && x !== bot);
-          if (!targets.length) continue;
-          let target = targets[0];
-          for (const candidate of targets) if (Math.hypot(candidate.x - bot.x, candidate.y - bot.y) < Math.hypot(target.x - bot.x, target.y - bot.y)) target = candidate;
-          const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
-          const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
-          let delta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-          bot.angle += Math.max(-1, Math.min(1, delta)) * dt * (distance < 310 ? 0.5 : 1.8);
-          bot.drift -= dt;
-          if (bot.drift <= 0) { bot.drift = 1.8 + Math.random() * 3.8; bot.hit = -0.8 - Math.random() * 1.2; }
-          const pace = distance < 260 ? -0.38 : distance < 410 ? 0.28 : 0.7;
-          bot.x += Math.sin(bot.angle) * 96 * pace * dt + (bot.hit < 0 ? Math.cos(bot.angle) * 28 : 0) * dt;
-          bot.y -= Math.cos(bot.angle) * 96 * pace * dt - (bot.hit < 0 ? Math.sin(bot.angle) * 28 : 0) * dt;
-          bot.x = Math.max(65, Math.min(WORLD.width - 65, bot.x)); bot.y = Math.max(65, Math.min(WORLD.height - 65, bot.y));
-          if (distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
-            const aim = desired + (Math.random() - 0.5) * 0.2;
-            g.bullets.push({ x: bot.x + Math.sin(aim) * 37, y: bot.y - Math.cos(aim) * 37, vx: Math.sin(aim) * 400, vy: -Math.cos(aim) * 400, owner: bot, life: 2.5, damage: 5.3 });
-            bot.cooldown = 0.52 + Math.random() * 0.58;
-          }
-        }
-        for (const bullet of g.bullets) {
-          bullet.x += bullet.vx * dt; bullet.y += bullet.vy * dt; bullet.life -= dt;
-          if (blocks.some(([x, y, w, h]) => bullet.x > x && bullet.x < x + w && bullet.y > y && bullet.y < y + h)) bullet.life = 0;
-          for (const v of g.cars) if (v.alive && v !== bullet.owner && bullet.life > 0 && Math.hypot(bullet.x - v.x, bullet.y - v.y) < 32) {
-            const target = cars[v.carId];
-            v.hp -= bullet.damage * (1 - target.armor / 250); bullet.life = 0; v.hit = 0.14;
-            if (v.hp <= 0) { v.hp = 0; v.alive = false; if (bullet.owner === p) g.kills++; }
-          }
-        }
-        g.bullets = g.bullets.filter(b => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height);
-        p.cooldown = Math.max(0, p.cooldown - dt); p.hit = Math.max(0, p.hit - dt);
-        const alive = g.cars.filter(x => x.alive).length;
-        if (!p.alive) finishMatch(false, alive + 1);
-        else if (alive === 1) finishMatch(true, 1);
-        if (now - g.lastHud > 140) { setHud({ hp: Math.ceil(p.hp), alive, kills: g.kills, time: Math.floor((now - g.started) / 1000) }); g.lastHud = now; }
       }
-      const g2 = gameRef.current;
-      const p = g2?.player;
+      for (const bot of g.cars) {
+        if (!bot.bot || !bot.alive) continue;
+        bot.cooldown -= dt;
+        const targets = g.cars.filter(
+          (x) => x.alive && x !== bot && !(g.over && x === p && !p.alive),
+        );
+        if (!targets.length) continue;
+        let target = targets[0] as Vehicle;
+        for (const c of targets)
+          if (Math.hypot(c.x - bot.x, c.y - bot.y) < Math.hypot(target.x - bot.x, target.y - bot.y))
+            target = c;
+        const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
+        const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
+        const delta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        bot.angle += Math.max(-1, Math.min(1, delta)) * dt * (distance < 310 ? 0.5 : 1.8);
+        bot.drift -= dt;
+        if (bot.drift <= 0) {
+          bot.drift = 1.8 + Math.random() * 3.8;
+          bot.strafe = -0.8 - Math.random() * 1.2;
+        }
+        bot.strafe = Math.min(0, bot.strafe + dt);
+        const pace = distance < 260 ? -0.38 : distance < 410 ? 0.28 : 0.7;
+        bot.x +=
+          Math.sin(bot.angle) * 96 * pace * dt +
+          (bot.strafe < 0 ? Math.cos(bot.angle) * 28 : 0) * dt;
+        bot.y -=
+          Math.cos(bot.angle) * 96 * pace * dt -
+          (bot.strafe < 0 ? Math.sin(bot.angle) * 28 : 0) * dt;
+        collide(bot);
+        if (distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
+          const aim = desired + (Math.random() - 0.5) * 0.2;
+          const mx = bot.x + Math.sin(aim) * 37,
+            my = bot.y - Math.cos(aim) * 37;
+          g.bullets.push({
+            x: mx,
+            y: my,
+            vx: Math.sin(aim) * 400,
+            vy: -Math.cos(aim) * 400,
+            owner: bot,
+            life: 2.5,
+            damage: 5.3,
+          });
+          bot.cooldown = 0.52 + Math.random() * 0.58;
+          fx.muzzle(mx, my, aim, PAL.hostile);
+        }
+      }
+      for (const b of g.bullets) {
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        b.life -= dt;
+        const dir = Math.atan2(b.vx, -b.vy);
+        if (blocks.some(([x, y, w, h]) => b.x > x && b.x < x + w && b.y > y && b.y < y + h)) {
+          b.life = 0;
+          fx.impact(b.x, b.y, dir, PAL.yellow, 6);
+        }
+        for (const v of g.cars) {
+          if (!v.alive || v === b.owner || b.life <= 0 || Math.hypot(b.x - v.x, b.y - v.y) >= 32)
+            continue;
+          const target = carAt(v.carId);
+          v.hp -= b.damage * (1 - target.armor / 250);
+          b.life = 0;
+          v.hit = 0.14;
+          fx.impact(b.x, b.y, dir, b.owner.bot ? PAL.hostile : PAL.friendly, 10);
+          if (v === p) {
+            fx.shake = Math.max(fx.shake, 4);
+            sfx.hit();
+          }
+          if (v.hp <= 0) {
+            v.hp = 0;
+            v.alive = false;
+            fx.explode(v.x, v.y, target.color);
+            sfx.boom();
+            if (b.owner === p) g.kills++;
+          }
+        }
+      }
+      g.bullets = g.bullets.filter(
+        (b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height,
+      );
+      p.cooldown = Math.max(0, p.cooldown - dt);
+      for (const v of g.cars) {
+        v.hit = Math.max(0, v.hit - dt);
+        if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
+      }
+      const alive = g.cars.filter((x) => x.alive).length;
+      if (!g.over) {
+        if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
+        else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+      } else {
+        g.over.t -= dt;
+        if (g.over.t <= 0) {
+          finishMatch(g.over.won, g.over.position);
+          return;
+        }
+      }
+      if (now - g.lastHud > 140) {
+        const dots: Dot[] = g.cars
+          .filter((v) => v.alive)
+          .map((v) => ({
+            x: (v.x / WORLD.width) * 100,
+            y: (v.y / WORLD.height) * 100,
+            me: v === p,
+          }));
+        setHud({
+          hp: Math.ceil(p.hp),
+          alive,
+          kills: g.kills,
+          time: Math.floor((now - g.started) / 1000),
+          dots,
+        });
+        g.lastHud = now;
+      }
+    };
+
+    const collide = (v: Vehicle) => {
+      v.x = clamp(v.x, 65, WORLD.width - 65);
+      v.y = clamp(v.y, 65, WORLD.height - 65);
+      const r = 26;
+      for (const [bx, by, bw, bh] of blocks) {
+        const nx = clamp(v.x, bx, bx + bw),
+          ny = clamp(v.y, by, by + bh);
+        const dx = v.x - nx,
+          dy = v.y - ny,
+          d = Math.hypot(dx, dy);
+        if (d < r) {
+          if (d > 0.001) {
+            v.x = nx + (dx / d) * r;
+            v.y = ny + (dy / d) * r;
+          } else v.x = bx - r;
+        }
+      }
+    };
+
+    const renderArena = (t: number) => {
+      const g = gameRef.current,
+        fx = fxRef.current;
+      const p = g?.player;
       const zoom = Math.min(width / 820, height / 560, 1);
-      const cx = p && modeRef.current === "playing" ? p.x : WORLD.width / 2;
-      const cy = p && modeRef.current === "playing" ? p.y : WORLD.height / 2;
-      const ox = width / 2 - cx * zoom, oy = height / 2 - cy * zoom;
-      ctx.fillStyle = color("--arena-ground"); ctx.fillRect(0, 0, width, height);
-      ctx.save(); ctx.translate(ox, oy); ctx.scale(zoom, zoom);
-      ctx.fillStyle = color("--arena-floor"); ctx.fillRect(0, 0, WORLD.width, WORLD.height);
-      ctx.strokeStyle = color("--arena-grid"); ctx.lineWidth = 1;
-      for (let x = 0; x <= WORLD.width; x += 80) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, WORLD.height); ctx.stroke(); }
-      for (let y = 0; y <= WORLD.height; y += 80) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD.width, y); ctx.stroke(); }
-      ctx.setLineDash([12, 12]); ctx.lineWidth = 3; ctx.strokeStyle = color("--arena-road");
-      for (const y of [500, 1010]) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(WORLD.width, y); ctx.stroke(); }
-      ctx.setLineDash([]);
-      for (const [x, y, w, h] of blocks) {
-        ctx.fillStyle = color("--arena-shadow"); ctx.fillRect(x + 9, y + 11, w, h);
-        ctx.fillStyle = color("--arena-building"); ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = color("--arena-roof"); ctx.fillRect(x + 8, y + 8, w - 16, h - 16);
-        ctx.fillStyle = color("--arena-window");
-        for (let wx = x + 22; wx < x + w - 18; wx += 34) for (let wy = y + 21; wy < y + h - 15; wy += 30) ctx.fillRect(wx, wy, 9, 9);
-        ctx.fillStyle = color("--arena-trim"); ctx.fillRect(x + 13, y + 12, Math.min(34, w - 26), 3);
+      const cx = p ? p.x : WORLD.width / 2,
+        cy = p ? p.y : WORLD.height / 2;
+      const [sx, sy] = fx.offset();
+      const ox = width / 2 - cx * zoom + sx,
+        oy = height / 2 - cy * zoom + sy;
+      ctx.fillStyle = PAL.void;
+      ctx.fillRect(0, 0, width, height);
+      ctx.save();
+      ctx.translate(ox, oy);
+      ctx.scale(zoom, zoom);
+      // floor + neon grid (only draw what the camera can see)
+      ctx.fillStyle = PAL.floor;
+      ctx.fillRect(0, 0, WORLD.width, WORLD.height);
+      const vx0 = clamp(Math.floor(-ox / zoom / 80) * 80, 0, WORLD.width),
+        vx1 = clamp((width - ox) / zoom + 80, 0, WORLD.width);
+      const vy0 = clamp(Math.floor(-oy / zoom / 80) * 80, 0, WORLD.height),
+        vy1 = clamp((height - oy) / zoom + 80, 0, WORLD.height);
+      ctx.strokeStyle = PAL.grid;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let x = vx0; x <= vx1; x += 80) {
+        ctx.moveTo(x, vy0);
+        ctx.lineTo(x, vy1);
       }
-      const game = g2;
-      if (game) {
-        for (const b of game.bullets) { ctx.fillStyle = b.owner.bot ? color("--bullet-hostile") : color("--bullet-friendly"); ctx.shadowBlur = 10; ctx.shadowColor = ctx.fillStyle; ctx.beginPath(); ctx.arc(b.x, b.y, 5, 0, Math.PI * 2); ctx.fill(); }
-        ctx.shadowBlur = 0;
-        for (const vehicle of game.cars) {
-          if (!vehicle.alive) continue;
-          const image = game.images[vehicle.carId]; const vw = vehicle.carId === 3 ? 43 : 48; const vh = vehicle.carId === 3 ? 72 : 77;
-          ctx.save(); ctx.translate(vehicle.x, vehicle.y); ctx.rotate(vehicle.angle);
-          ctx.fillStyle = color("--car-shadow"); ctx.beginPath(); ctx.ellipse(4, 8, 23, 33, 0, 0, Math.PI * 2); ctx.fill();
-          if (image?.complete && image.naturalWidth) ctx.drawImage(image, -vw / 2, -vh / 2, vw, vh);
-          else { ctx.fillStyle = color("--arena-window"); ctx.fillRect(-15, -25, 30, 50); }
-          if (vehicle === game.player) { ctx.strokeStyle = color("--player-outline"); ctx.lineWidth = 2.4; ctx.beginPath(); ctx.ellipse(0, 0, 23, 37, 0, 0, Math.PI * 2); ctx.stroke(); }
-          ctx.restore();
-          if (vehicle === game.player || vehicle.hp < cars[vehicle.carId].hp * 0.63) {
-            ctx.fillStyle = color("--health-track"); ctx.fillRect(vehicle.x - 23, vehicle.y - 45, 46, 4);
-            ctx.fillStyle = vehicle === game.player ? color("--health-player") : color("--health-bot");
-            ctx.fillRect(vehicle.x - 23, vehicle.y - 45, 46 * Math.max(0, vehicle.hp / cars[vehicle.carId].hp), 4);
+      for (let y = vy0; y <= vy1; y += 80) {
+        ctx.moveTo(vx0, y);
+        ctx.lineTo(vx1, y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([16, 14]);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = PAL.yellow;
+      ctx.globalAlpha = 0.55;
+      for (const y of [500, 1010]) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(WORLD.width, y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      // buildings
+      for (const [x, y, w, h] of blocks) {
+        ctx.fillStyle = PAL.shadow;
+        ctx.fillRect(x + 10, y + 12, w, h);
+        ctx.fillStyle = PAL.building;
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = PAL.roof;
+        ctx.fillRect(x + 8, y + 8, w - 16, h - 16);
+        for (let wx = x + 22, i = 0; wx < x + w - 18; wx += 34, i++) {
+          for (let wy = y + 21, j = 0; wy < y + h - 15; wy += 30, j++) {
+            const on = (x * 7 + y * 3 + i * 5 + j * 11 + Math.floor(t * 0.6)) % 5 > 0;
+            ctx.fillStyle = !on ? "#2a1a63" : (i + j) % 2 ? PAL.window : PAL.windowCyan;
+            ctx.fillRect(wx, wy, 9, 9);
           }
         }
+        ctx.strokeStyle = PAL.trim;
+        ctx.lineWidth = 3;
+        ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
       }
-      ctx.strokeStyle = color("--arena-boundary"); ctx.lineWidth = 8; ctx.strokeRect(0, 0, WORLD.width, WORLD.height);
+      // tyre dust, sparks, smoke sit under the cars
+      if (g) {
+        for (const v of g.cars) {
+          if (!v.alive) continue;
+          const car = carAt(v.carId);
+          const img = sprites[v.carId];
+          ctx.save();
+          ctx.translate(v.x, v.y);
+          ctx.rotate(v.angle);
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = hexA(v === p ? PAL.cyan : car.color, v === p ? 0.22 : 0.12);
+          ctx.beginPath();
+          ctx.ellipse(0, 0, 33, 46, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = "rgba(0,0,0,0.5)";
+          ctx.beginPath();
+          ctx.ellipse(4, 8, 23, 33, 0, 0, Math.PI * 2);
+          ctx.fill();
+          if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
+          else drawFallbackCar(ctx, car, car.w, car.h);
+          if (v.hit > 0) {
+            ctx.globalCompositeOperation = "lighter";
+            ctx.fillStyle = "rgba(255,255,255,0.55)";
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 23, 37, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalCompositeOperation = "source-over";
+          }
+          if (v === p) {
+            ctx.strokeStyle = PAL.cyan;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 5]);
+            ctx.beginPath();
+            ctx.ellipse(0, 0, 25, 39, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          ctx.restore();
+          if (v === p || v.hp < car.hp * 0.63) {
+            const pct = Math.max(0, v.hp / car.hp);
+            ctx.fillStyle = "#000";
+            ctx.fillRect(v.x - 25, v.y - 49, 50, 8);
+            ctx.fillStyle = "#2a1a63";
+            ctx.fillRect(v.x - 23, v.y - 47, 46, 4);
+            ctx.fillStyle = v === p ? PAL.lime : PAL.red;
+            ctx.fillRect(v.x - 23, v.y - 47, 46 * pct, 4);
+          }
+        }
+        for (const b of g.bullets)
+          drawTracer(ctx, b.x, b.y, b.vx, b.vy, b.owner.bot ? PAL.hostile : PAL.friendly);
+      }
+      fx.draw(ctx);
+      const pulse = 0.55 + 0.45 * Math.sin(t * 3);
+      ctx.strokeStyle = PAL.boundary;
+      ctx.lineWidth = 8;
+      ctx.strokeRect(0, 0, WORLD.width, WORLD.height);
+      ctx.globalAlpha = pulse;
+      ctx.strokeStyle = PAL.cyan;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(9, 9, WORLD.width - 18, WORLD.height - 18);
+      ctx.globalAlpha = 1;
       ctx.restore();
+    };
+
+    const draw = (now: number) => {
+      const dt = Math.min((now - previous) / 1000, 0.04);
+      previous = now;
+      const m = modeRef.current,
+        t = now / 1000;
+      const running = !(m === "playing" && pausedRef.current);
+      if (running) fxRef.current.update(dt);
+      if (m === "playing") {
+        if (!pausedRef.current) step(dt, now);
+        renderArena(t);
+      } else if (m === "result" && gameRef.current) renderArena(t);
+      else {
+        stepShowroom(dt);
+        renderShowroom();
+      }
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
-    return () => { cancelAnimationFrame(frame); resizeObserver?.disconnect(); };
+    return () => {
+      cancelAnimationFrame(frame);
+      ro?.disconnect();
+      window.removeEventListener("resize", resize);
+    };
   }, [finishMatch]);
 
+  /* ───────────────────────── input ───────────────────────── */
   useEffect(() => {
+    const drive = [
+      "w",
+      "a",
+      "s",
+      "d",
+      "arrowup",
+      "arrowdown",
+      "arrowleft",
+      "arrowright",
+      "5",
+      " ",
+      "escape",
+      "enter",
+    ];
     const onKey = (e: KeyboardEvent, down: boolean) => {
       const key = e.key.toLowerCase();
-      if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", "5", " ", "escape"].includes(key)) e.preventDefault();
-      if (key === "escape" && down && modeRef.current === "playing") setPaused(v => !v);
-      const g = gameRef.current;
-      if (g) down ? g.keys.add(key) : g.keys.delete(key);
+      if (down) sfxRef.current.unlock();
+      if (drive.includes(key)) e.preventDefault();
+      if (down && !e.repeat) {
+        const m = modeRef.current;
+        if (key === "escape" && m === "playing") {
+          const v = !pausedRef.current;
+          pausedRef.current = v;
+          setPaused(v);
+        }
+        if (m === "select") {
+          if (key === "arrowleft" || key === "a") pick(selectedRef.current - 1);
+          else if (key === "arrowright" || key === "d") pick(selectedRef.current + 1);
+          else if (key === "enter") startRef.current();
+        }
+      }
+      if (down) keysRef.current.add(key);
+      else keysRef.current.delete(key);
     };
-    const onDown = (e: KeyboardEvent) => onKey(e, true); const onUp = (e: KeyboardEvent) => onKey(e, false);
-    window.addEventListener("keydown", onDown); window.addEventListener("keyup", onUp);
-    return () => { window.removeEventListener("keydown", onDown); window.removeEventListener("keyup", onUp); };
-  }, []);
+    const onDown = (e: KeyboardEvent) => onKey(e, true);
+    const onUp = (e: KeyboardEvent) => onKey(e, false);
+    const clear = () => keysRef.current.clear();
+    const unlock = () => sfxRef.current.unlock();
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    window.addEventListener("blur", clear);
+    window.addEventListener("pointerdown", unlock);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+      window.removeEventListener("blur", clear);
+      window.removeEventListener("pointerdown", unlock);
+    };
+  }, [pick]);
 
-  const touchKey = (key: string, down: boolean) => { const g = gameRef.current; if (g) down ? g.keys.add(key) : g.keys.delete(key); };
-  const current = cars[selected];
-  const elapsed = `${Math.floor(hud.time / 60).toString().padStart(2, "0")}:${(hud.time % 60).toString().padStart(2, "0")}`;
+  const hold = (key: string) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.preventDefault();
+      keysRef.current.add(key);
+    },
+    onPointerUp: () => {
+      keysRef.current.delete(key);
+    },
+    onPointerLeave: () => {
+      keysRef.current.delete(key);
+    },
+    onPointerCancel: () => {
+      keysRef.current.delete(key);
+    },
+    onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
+  });
+
+  const current = carAt(selected);
+  const ovr = rating(current);
+  const vars = { "--c": current.color } as CSSProperties;
+  const statRows: [string, number, number, typeof Heart][] = [
+    ["HP", current.hp, (current.hp / 160) * 100, Heart],
+    ["SPEED", current.speed, current.speed, Gauge],
+    ["FIRE RATE", current.fireRate, current.fireRate, Zap],
+    ["DAMAGE", current.damage, current.damage, Crosshair],
+    ["ARMOR", current.armor, current.armor, Shield],
+  ];
+  const toggleMute = () => setMuted((v) => !v);
+  const togglePause = () => {
+    const v = !pausedRef.current;
+    pausedRef.current = v;
+    setPaused(v);
+  };
 
   return (
     <main className="game-shell">
-      <section className={`arena-stage ${mode === "playing" ? "is-playing" : ""}`} aria-label="Car combat arena">
-        <canvas ref={canvasRef} className="arena-canvas" aria-label="Live top-down car combat arena" />
-        {mode !== "playing" && <div className="arena-brand"><span className="brand-mark"><Crosshair size={17} /></span><span>LAST CAR <b>STANDING</b></span><span className="brand-divider" /> <span className="brand-sub">COMBAT ARENA</span></div>}
-        {mode !== "playing" && <div className="arena-corner"><span className="live-dot" /> ARENA 01 <span className="corner-divider">/</span> NO RULES</div>}
+      <section className={`arena-stage mode-${mode}`} aria-label="Car combat arena" style={vars}>
+        <canvas ref={canvasRef} className="arena-canvas" aria-label="Live car combat arena" />
+        <div className="crt" aria-hidden="true" />
 
-        {mode === "select" && <div className="selection-layout">
-          <header className="selection-intro"><span className="eyebrow"><span className="eyebrow-line" /> SELECT YOUR VEHICLE</span><h1>PICK YOUR<br /><em>FIGHTER.</em></h1><div className="intro-foot"><span>01 — 08</span><span className="intro-stroke" /><span>EVERY CAR HAS ITS PRICE.</span></div></header>
-          <div className="car-browser"><div className="browser-heading"><span>VEHICLE ROSTER</span><span className="roster-live">● &nbsp;8 COMBATANTS</span></div>
-            <div className="vehicle-grid">{cars.map((car, i) => <button key={car.name} type="button" className={`vehicle-tile ${selected === i ? "vehicle-active" : ""}`} onClick={() => setSelected(i)} aria-label={`Select ${car.name}`} aria-pressed={selected === i}>
-              <span className="tile-index">0{i + 1}</span><img src={car.asset.url} alt={car.name} /><span className="tile-name">{car.name}</span><span className="tile-class">{car.model}</span>{selected === i && <span className="selected-marker"><Crosshair size={11} /> SELECTED</span>}
-            </button>)}</div>
-            <div className="vehicle-detail"><div className="detail-identity"><span className="detail-overline">CURRENT LOADOUT</span><h2>{current.name}<span className="detail-period">.</span></h2><span className="detail-model">{current.model}</span></div>
-              <div className="stat-list">{([["HP", current.hp, Heart], ["SPEED", current.speed, MoveUpRight], ["FIRE RATE", current.fireRate, Zap], ["DAMAGE", current.damage, Crosshair], ["ARMOR", current.armor, Shield]] as const).map(([label, value, Icon]) => <div className="stat-line" key={label}><span className="stat-label"><Icon size={12} />{label}</span><span className="stat-meter"><span style={{ width: `${value}%` }} /></span><span className="stat-number">{String(value).padStart(3, "0")}</span></div>)}</div>
+        {mode !== "playing" && (
+          <header className="top-bar">
+            <div className="logo" aria-label="Last Car Standing">
+              <span className="logo-a">LAST CAR</span>
+              <span className="logo-b">STANDING</span>
             </div>
-            <div className="launch-row"><span className="entry-count"><span>12</span> CARS ENTER THE ARENA</span><Button className="launch-button" onClick={startMatch}>ENTER THE ARENA <ArrowRight size={17} /></Button></div>
+            <div className="top-right">
+              <span className="credit">
+                CREDIT <b>01</b>
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={toggleMute}
+                aria-label={muted ? "Unmute sound" : "Mute sound"}
+                aria-pressed={muted}
+              >
+                {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              </button>
+            </div>
+          </header>
+        )}
+
+        {mode === "select" && (
+          <div className="garage">
+            <div className="garage-main">
+              <section className="win spec-panel" aria-live="polite">
+                <div className="win-title">
+                  <span>P1 · SELECTED CAR</span>
+                  <span className="win-dots">
+                    <i />
+                    <i />
+                    <i />
+                  </span>
+                </div>
+                <div className="win-body">
+                  <div className="name-row">
+                    <h1 className="car-name">{current.name}</h1>
+                    <span className="rank-badge" title="Overall rating">
+                      {rank(ovr)}
+                    </span>
+                  </div>
+                  <span className="car-model">{current.model}</span>
+                  <div className="stat-list">
+                    {statRows.map(([label, value, pct, Icon]) => (
+                      <div className="stat-row" key={label}>
+                        <span className="stat-label">
+                          <Icon size={13} />
+                          {label}
+                        </span>
+                        <span className="segs" aria-hidden="true">
+                          {Array.from({ length: 10 }, (_, n) => (
+                            <i key={n} className={n < Math.round(pct / 10) ? "on" : ""} />
+                          ))}
+                        </span>
+                        <span className="stat-num">{String(value).padStart(3, "0")}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="ovr-line">
+                    <span>OVERALL</span>
+                    <b>{ovr}</b>
+                  </div>
+                </div>
+              </section>
+
+              <div className="showcase" ref={anchorRef}>
+                <button
+                  type="button"
+                  className="nav-arrow nav-left"
+                  onClick={() => pick(selected - 1)}
+                  aria-label="Previous car"
+                >
+                  <ChevronLeft size={26} />
+                </button>
+                <button
+                  type="button"
+                  className="nav-arrow nav-right"
+                  onClick={() => pick(selected + 1)}
+                  aria-label="Next car"
+                >
+                  <ChevronRight size={26} />
+                </button>
+                <span className="showcase-count">
+                  {String(selected + 1).padStart(2, "0")} / {String(cars.length).padStart(2, "0")}
+                </span>
+              </div>
+
+              <aside className="action-panel">
+                <button
+                  type="button"
+                  className="arcade-btn start-btn"
+                  onClick={() => startRef.current()}
+                >
+                  <Play size={18} /> START <small>ENTER</small>
+                </button>
+                <button type="button" className="arcade-btn alt-btn" {...hold("testfire")}>
+                  <Crosshair size={16} /> TEST FIRE <small>HOLD SPACE</small>
+                </button>
+                <p className="entry-note">
+                  <Swords size={13} /> {TOTAL} CARS ENTER · 1 LEAVES
+                </p>
+                <p className="key-tip">
+                  <kbd>←</kbd>
+                  <kbd>→</kbd> CHANGE CAR
+                </p>
+              </aside>
+            </div>
+
+            <section className="win garage-strip" aria-label="Garage">
+              <div className="win-title">
+                <span>GARAGE</span>
+                <span>{cars.length} VEHICLES</span>
+              </div>
+              <div className="tiles" role="listbox" aria-label="Choose your car">
+                {cars.map((car, i) => (
+                  <button
+                    key={car.name}
+                    type="button"
+                    role="option"
+                    aria-selected={selected === i}
+                    className={`tile ${selected === i ? "tile-active" : ""}`}
+                    style={{ "--c": car.color } as CSSProperties}
+                    onClick={() => pick(i)}
+                    aria-label={`Select ${car.name}`}
+                  >
+                    <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
+                    {selected === i && <span className="tile-flag">P1</span>}
+                    <span className="tile-art">
+                      {broken[i] ? (
+                        <span className="tile-swatch" />
+                      ) : (
+                        <img
+                          src={car.url}
+                          alt=""
+                          loading="eager"
+                          onError={() => setBroken((b) => ({ ...b, [i]: true }))}
+                        />
+                      )}
+                    </span>
+                    <span className="tile-name">{car.name}</span>
+                    <span className="tile-rank">{rank(rating(car))}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           </div>
-        </div>}
+        )}
 
-        {mode === "playing" && <>
-          <div className="combat-top"><div className="combat-brand"><Crosshair size={15} /> LAST CAR <b>STANDING</b><span>ARENA 01</span></div><div className="combat-timer">{elapsed}</div><Button variant="ghost" size="sm" className="pause-button" onClick={() => setPaused(v => !v)}>{paused ? "RESUME" : "Ⅱ"}</Button></div>
-          <div className="combat-hud"><div className="hud-survivors"><span className="hud-eyebrow">STILL IN THE FIGHT</span><div><b>{String(hud.alive).padStart(2,"0")}</b><span className="hud-slash">/</span><span>12</span></div><span className="hud-kills">{String(hud.kills).padStart(2,"0")} ELIMINATIONS</span></div><div className="hud-vitals"><div className="vital-head"><span><Heart size={14}/> HULL INTEGRITY</span><b>{hud.hp}<small> HP</small></b></div><div className="vital-track"><span style={{ width: `${Math.min(100, hud.hp / cars[selected].hp * 100)}%` }} /></div><div className="vital-car">{current.name.toUpperCase()} <span>ARMOR {current.armor}</span></div></div><div className="hud-map"><span>SECTOR 01</span><div className="map-frame"><i className="map-dot" style={{ left: "50%", top: "50%" }} /><i className="map-player" style={{ left: `${15 + (Math.sin(hud.time * .2) + 1) * 35}%`, top: `${17 + (Math.cos(hud.time * .17) + 1) * 33}%` }} /></div></div></div>
-          <div className="combat-bottom"><div className="key-hints"><span className="key-hint"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> DRIVE</span><span className="key-hint"><kbd>5</kbd> FIRE</span></div><div className="mobile-controls"><div className="dpad"><Button variant="ghost" className="pad-key pad-up" onPointerDown={() => touchKey("w", true)} onPointerUp={() => touchKey("w", false)} onPointerLeave={() => touchKey("w", false)}><ArrowUp /></Button><Button variant="ghost" className="pad-key pad-left" onPointerDown={() => touchKey("a", true)} onPointerUp={() => touchKey("a", false)} onPointerLeave={() => touchKey("a", false)}><ArrowLeft /></Button><Button variant="ghost" className="pad-key pad-down" onPointerDown={() => touchKey("s", true)} onPointerUp={() => touchKey("s", false)} onPointerLeave={() => touchKey("s", false)}><ArrowDown /></Button><Button variant="ghost" className="pad-key pad-right" onPointerDown={() => touchKey("d", true)} onPointerUp={() => touchKey("d", false)} onPointerLeave={() => touchKey("d", false)}><ArrowRight /></Button></div><Button className="mobile-fire" onPointerDown={() => touchKey("5", true)} onPointerUp={() => touchKey("5", false)} onPointerLeave={() => touchKey("5", false)}><Crosshair size={18} /> FIRE</Button></div><span className="combat-warning"><span className="live-dot" /> LIVE COMBAT</span></div>
-          {paused && <div className="pause-overlay"><div className="pause-box"><span className="eyebrow">TAKE A BREATH</span><h2>MATCH<br /><em>PAUSED.</em></h2><Button className="launch-button" onClick={() => setPaused(false)}>BACK TO THE FIGHT <ArrowRight size={16}/></Button><Button variant="ghost" onClick={() => setMode("select")}>ABANDON MATCH</Button></div></div>}
-        </>}
+        {mode === "playing" && (
+          <>
+            <div className="hud-top">
+              <div className="hud-brand">
+                <Crosshair size={14} /> LAST CAR <b>STANDING</b>
+              </div>
+              <div className="hud-timer">{fmtTime(hud.time)}</div>
+              <div className="hud-top-right">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={toggleMute}
+                  aria-label={muted ? "Unmute sound" : "Mute sound"}
+                >
+                  {muted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={togglePause}
+                  aria-label={paused ? "Resume" : "Pause"}
+                >
+                  {paused ? <Play size={15} /> : "II"}
+                </button>
+              </div>
+            </div>
+            <div className="hud-left win">
+              <span className="hud-eyebrow">STILL IN THE FIGHT</span>
+              <div className="hud-count">
+                <b>{String(hud.alive).padStart(2, "0")}</b>
+                <span>/{TOTAL}</span>
+              </div>
+              <span className="hud-kills">{String(hud.kills).padStart(2, "0")} ELIMINATIONS</span>
+            </div>
+            <div className="hud-vitals win">
+              <div className="vital-head">
+                <span>
+                  <Heart size={13} /> HULL
+                </span>
+                <b>
+                  {hud.hp}
+                  <small> HP</small>
+                </b>
+              </div>
+              <div className="vital-track">
+                <span style={{ width: `${clamp((hud.hp / current.hp) * 100, 0, 100)}%` }} />
+              </div>
+              <div className="vital-car">{current.name.toUpperCase()}</div>
+            </div>
+            <div className="hud-map win">
+              <span className="hud-eyebrow">RADAR</span>
+              <div className="map-frame">
+                {blocks.map(([x, y, w, h], i) => (
+                  <i
+                    key={i}
+                    className="map-block"
+                    style={{
+                      left: `${(x / WORLD.width) * 100}%`,
+                      top: `${(y / WORLD.height) * 100}%`,
+                      width: `${(w / WORLD.width) * 100}%`,
+                      height: `${(h / WORLD.height) * 100}%`,
+                    }}
+                  />
+                ))}
+                {hud.dots.map((d, i) => (
+                  <i
+                    key={i}
+                    className={d.me ? "map-player" : "map-dot"}
+                    style={{ left: `${d.x}%`, top: `${d.y}%` }}
+                  />
+                ))}
+              </div>
+            </div>
+            <div className="hud-bottom">
+              <div className="key-hints">
+                <span>
+                  <kbd>W</kbd>
+                  <kbd>A</kbd>
+                  <kbd>S</kbd>
+                  <kbd>D</kbd> DRIVE
+                </span>
+                <span>
+                  <kbd>5</kbd>
+                  <kbd>SPACE</kbd> FIRE
+                </span>
+                <span>
+                  <kbd>ESC</kbd> PAUSE
+                </span>
+              </div>
+              <div className="mobile-controls">
+                <div className="dpad">
+                  <button type="button" className="pad-key pad-up" aria-label="Up" {...hold("w")}>
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    className="pad-key pad-left"
+                    aria-label="Left"
+                    {...hold("a")}
+                  >
+                    ◀
+                  </button>
+                  <button
+                    type="button"
+                    className="pad-key pad-down"
+                    aria-label="Down"
+                    {...hold("s")}
+                  >
+                    ▼
+                  </button>
+                  <button
+                    type="button"
+                    className="pad-key pad-right"
+                    aria-label="Right"
+                    {...hold("d")}
+                  >
+                    ▶
+                  </button>
+                </div>
+                <button type="button" className="arcade-btn mobile-fire" {...hold("5")}>
+                  <Crosshair size={18} /> FIRE
+                </button>
+              </div>
+            </div>
+            {paused && (
+              <div className="overlay">
+                <div className="win overlay-box">
+                  <div className="win-title">
+                    <span>PAUSED</span>
+                  </div>
+                  <div className="win-body center">
+                    <h2 className="big-title">
+                      MATCH
+                      <br />
+                      <em>PAUSED</em>
+                    </h2>
+                    <button type="button" className="arcade-btn start-btn" onClick={togglePause}>
+                      <Play size={16} /> RESUME
+                    </button>
+                    <button
+                      type="button"
+                      className="arcade-btn alt-btn"
+                      onClick={() => {
+                        pausedRef.current = false;
+                        setPaused(false);
+                        setModeSync("select");
+                      }}
+                    >
+                      ABANDON MATCH
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
 
-        {mode === "result" && <div className="result-overlay"><div className="result-box"><span className="eyebrow"><Trophy size={14}/> MATCH COMPLETE</span><h1>{result.won ? <>LAST CAR<br/><em>STANDING.</em></> : <>OUT OF THE<br/><em>FIGHT.</em></>}</h1><p className="result-sub">{result.won ? "THE ARENA IS YOURS." : "THE ARENA CLAIMS ANOTHER."}</p><div className="result-stats"><div><span>FINAL POSITION</span><b>#{result.position.toString().padStart(2,"0")}</b></div><div><span>EXPERIENCE EARNED</span><b className="xp-number">+{result.xp}<small> XP</small></b></div><div><span>ELIMINATIONS</span><b>{hud.kills.toString().padStart(2,"0")}</b></div></div><Button className="launch-button" onClick={startMatch}>{result.won ? "PLAY AGAIN" : "RUN IT BACK"} <ArrowRight size={17}/></Button><Button variant="ghost" className="garage-button" onClick={() => setMode("select")}>BACK TO THE GARAGE</Button></div></div>}
+        {mode === "result" && (
+          <div className="overlay">
+            <div className="win overlay-box">
+              <div className="win-title">
+                <span>
+                  <Trophy size={13} /> MATCH COMPLETE
+                </span>
+              </div>
+              <div className="win-body center">
+                <h1 className="big-title">
+                  {result.won ? (
+                    <>
+                      LAST CAR
+                      <br />
+                      <em>STANDING!</em>
+                    </>
+                  ) : (
+                    <>
+                      GAME
+                      <br />
+                      <em>OVER</em>
+                    </>
+                  )}
+                </h1>
+                <p className="result-sub">
+                  {result.won ? "THE ARENA IS YOURS." : "THE ARENA CLAIMS ANOTHER."}
+                </p>
+                <div className="result-stats">
+                  <div>
+                    <span>POSITION</span>
+                    <b>#{String(result.position).padStart(2, "0")}</b>
+                  </div>
+                  <div>
+                    <span>XP</span>
+                    <b>+{result.xp}</b>
+                  </div>
+                  <div>
+                    <span>KILLS</span>
+                    <b>{String(hud.kills).padStart(2, "0")}</b>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="arcade-btn start-btn"
+                  onClick={() => startRef.current()}
+                >
+                  <Play size={16} /> {result.won ? "PLAY AGAIN" : "CONTINUE?"}
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn alt-btn"
+                  onClick={() => setModeSync("select")}
+                >
+                  BACK TO GARAGE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </section>
-      <footer className="game-footer"><span>LAST CAR STANDING <span className="footer-slash">/</span> SURVIVE THE SCRAP</span><span className="footer-right"><i/> NO RESPAWNS. NO MERCY.</span></footer>
+      <footer className="game-footer">
+        <div className="ticker">
+          <span>
+            ★ LAST CAR STANDING ★ NO RESPAWNS ★ NO MERCY ★ INSERT COIN ★ SURVIVE THE SCRAP ★ LAST
+            CAR STANDING ★ NO RESPAWNS ★ NO MERCY ★ INSERT COIN ★ SURVIVE THE SCRAP ★
+          </span>
+        </div>
+      </footer>
     </main>
   );
+}
+
+/** "#rrggbb" + alpha → "rgba(r,g,b,a)". Plain rgba() keeps canvas and CSS happy on old Chrome. */
+function hexA(hex: string, a: number) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }

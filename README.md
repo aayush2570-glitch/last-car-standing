@@ -22,3 +22,11 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+
+## Browser support
+
+The game targets **Chrome 109 and newer** (the last Chrome for Windows 7/8/8.1 and macOS 10.11–10.12).
+
+- `vite.config.ts` builds JS for `chrome109` and runs CSS through lightningcss, which rewrites `oklch()` and `color-mix()` into plain rgb.
+- Canvas colours and all game CSS use plain hex / `rgba()`; canvas silently ignores colours it cannot parse, so never feed it `oklch()`.
+- Avoid: CSS nesting, `text-wrap`, `light-dark()`, `@starting-style`, `scrollbar-width`, and JS such as `toSorted`, `Object.groupBy`, `Promise.withResolvers`.
