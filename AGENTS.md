@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+## Architecture decisions
+- Keep car combat simulation and rendering inside the home-page client experience using Canvas, avoiding extra dependencies and ensuring real-time play works without a backend.
