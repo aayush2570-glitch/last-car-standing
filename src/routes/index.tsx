@@ -718,25 +718,8 @@ function ArenaGame() {
       ctx.scale(zoom, zoom);
       // polished grey tile floor (pre-rendered once, then just blitted)
       ctx.drawImage(getFloor(), 0, 0);
-      // buildings
-      for (const [x, y, w, h] of blocks) {
-        ctx.fillStyle = PAL.shadow;
-        ctx.fillRect(x + 10, y + 12, w, h);
-        ctx.fillStyle = PAL.building;
-        ctx.fillRect(x, y, w, h);
-        ctx.fillStyle = PAL.roof;
-        ctx.fillRect(x + 8, y + 8, w - 16, h - 16);
-        for (let wx = x + 22, i = 0; wx < x + w - 18; wx += 34, i++) {
-          for (let wy = y + 21, j = 0; wy < y + h - 15; wy += 30, j++) {
-            const on = (x * 7 + y * 3 + i * 5 + j * 11 + Math.floor(t * 0.6)) % 5 > 0;
-            ctx.fillStyle = !on ? "#2a1a63" : (i + j) % 2 ? PAL.window : PAL.windowCyan;
-            ctx.fillRect(wx, wy, 9, 9);
-          }
-        }
-        ctx.strokeStyle = PAL.trim;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
-      }
+      // shipping containers + crates (solid obstacles)
+      blocks.forEach(([x, y, w, h], i) => drawBox(ctx, x, y, w, h, i));
       // tyre dust, sparks, smoke sit under the cars
       if (g) {
         for (const v of g.cars) {
@@ -1288,6 +1271,123 @@ function ArenaGame() {
       </section>
     </main>
   );
+}
+
+const BOX_COLORS = ["#b5482f", "#3f6f9a", "#5d7a3a", "#c9992e", "#7b838f"];
+
+/** "#rrggbb" shaded toward black (f<0) or white (f>0). */
+function shade(hex: string, f: number) {
+  const n = parseInt(hex.slice(1), 16);
+  const m = (c: number) => Math.round(f < 0 ? c * (1 + f) : c + (255 - c) * f);
+  return `rgb(${m((n >> 16) & 255)},${m((n >> 8) & 255)},${m(n & 255)})`;
+}
+
+/** Top-down box obstacle: small ones are wooden crates, big ones are shipping containers. */
+function drawBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  i: number,
+) {
+  const lip = 9; // fake height: darker front face under the lid
+  ctx.fillStyle = "rgba(0,0,0,0.38)";
+  ctx.fillRect(x + 12, y + 14, w, h);
+  if (w <= 110 && h <= 110) {
+    // wooden crate
+    ctx.fillStyle = "#6b4823";
+    ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = "#b07d45";
+    ctx.fillRect(x, y, w, h - lip);
+    ctx.strokeStyle = "rgba(60,35,10,0.35)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (let py = y + 14; py < y + h - lip; py += 14) {
+      ctx.moveTo(x, py);
+      ctx.lineTo(x + w, py);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = "#7a5228";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(x + 3, y + 3, w - 6, h - lip - 6);
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.moveTo(x + 6, y + 6);
+    ctx.lineTo(x + w - 6, y + h - lip - 6);
+    ctx.moveTo(x + w - 6, y + 6);
+    ctx.lineTo(x + 6, y + h - lip - 6);
+    ctx.stroke();
+    ctx.fillStyle = "#d8b27a";
+    for (const [cx, cy] of [
+      [x + 6, y + 6],
+      [x + w - 6, y + 6],
+      [x + 6, y + h - lip - 6],
+      [x + w - 6, y + h - lip - 6],
+    ] as [number, number][])
+      ctx.fillRect(cx - 2, cy - 2, 4, 4);
+    return;
+  }
+  // shipping container
+  const col = BOX_COLORS[i % BOX_COLORS.length] ?? "#7b838f";
+  const horiz = w >= h;
+  ctx.fillStyle = shade(col, -0.45);
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = col;
+  ctx.fillRect(x, y, w, h - lip);
+  // corrugation ribs run across the container's short side
+  const th = h - lip;
+  ctx.lineWidth = 2;
+  for (let k = 10; k < (horiz ? w : th) - 6; k += 10) {
+    ctx.strokeStyle = shade(col, -0.3);
+    ctx.beginPath();
+    if (horiz) {
+      ctx.moveTo(x + k, y + 8);
+      ctx.lineTo(x + k, y + th - 8);
+    } else {
+      ctx.moveTo(x + 8, y + k);
+      ctx.lineTo(x + w - 8, y + k);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = shade(col, 0.22);
+    ctx.beginPath();
+    if (horiz) {
+      ctx.moveTo(x + k + 2, y + 8);
+      ctx.lineTo(x + k + 2, y + th - 8);
+    } else {
+      ctx.moveTo(x + 8, y + k + 2);
+      ctx.lineTo(x + w - 8, y + k + 2);
+    }
+    ctx.stroke();
+  }
+  // door end: two locking bars
+  ctx.strokeStyle = shade(col, -0.55);
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (horiz) {
+    ctx.moveTo(x + w - 14, y + 6);
+    ctx.lineTo(x + w - 14, y + th - 6);
+    ctx.moveTo(x + w - 22, y + 6);
+    ctx.lineTo(x + w - 22, y + th - 6);
+  } else {
+    ctx.moveTo(x + 6, y + th - 14);
+    ctx.lineTo(x + w - 6, y + th - 14);
+    ctx.moveTo(x + 6, y + th - 22);
+    ctx.lineTo(x + w - 6, y + th - 22);
+  }
+  ctx.stroke();
+  // steel frame + corner posts
+  ctx.strokeStyle = shade(col, -0.4);
+  ctx.lineWidth = 4;
+  ctx.strokeRect(x + 2, y + 2, w - 4, th - 4);
+  ctx.fillStyle = shade(col, -0.6);
+  for (const [cx, cy] of [
+    [x, y],
+    [x + w - 9, y],
+    [x, y + th - 9],
+    [x + w - 9, y + th - 9],
+  ] as [number, number][])
+    ctx.fillRect(cx, cy, 9, 9);
 }
 
 let floorCanvas: HTMLCanvasElement | null = null;
