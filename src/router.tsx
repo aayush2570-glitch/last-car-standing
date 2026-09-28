@@ -8,7 +8,7 @@ export const getRouter = () => {
   const router = createRouter({
     routeTree,
     // Hash routing so the game works from any static host path (itch.io iframe).
-    history: typeof window !== "undefined" ? createHashHistory() : undefined,
+    ...(typeof window !== "undefined" ? { history: createHashHistory() } : {}),
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,

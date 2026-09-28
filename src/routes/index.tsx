@@ -775,36 +775,18 @@ function ArenaGame() {
           ctx.save();
           ctx.translate(v.x, v.y);
           ctx.rotate(v.angle);
-          ctx.globalCompositeOperation = "lighter";
-          ctx.fillStyle = hexA(v === p ? PAL.cyan : car.color, v === p ? 0.22 : 0.12);
+          // One simple circle under every car: blue = you, red = everyone else.
+          const r = Math.max(car.w, car.h) * 0.62;
+          const rgb = v === p ? "56,160,255" : "255,64,64";
+          ctx.fillStyle = `rgba(${rgb},${v.hit > 0 ? 0.55 : 0.28})`;
           ctx.beginPath();
-          ctx.ellipse(0, 0, car.w * 0.62, car.h * 0.58, 0, 0, Math.PI * 2);
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
           ctx.fill();
-          ctx.globalCompositeOperation = "source-over";
-          ctx.fillStyle = "rgba(0,0,0,0.5)";
-          ctx.beginPath();
-          ctx.ellipse(4, 8, car.w * 0.46, car.h * 0.43, 0, 0, Math.PI * 2);
-          ctx.fill();
+          ctx.strokeStyle = `rgba(${rgb},0.6)`;
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
           if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
           else drawFallbackCar(ctx, car, car.w, car.h);
-          if (v.hit > 0) {
-            ctx.globalCompositeOperation = "lighter";
-            ctx.fillStyle = "rgba(255,255,255,0.55)";
-            ctx.beginPath();
-            ctx.ellipse(0, 0, car.w * 0.46, car.h * 0.48, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalCompositeOperation = "source-over";
-          }
-          if (v === p) {
-            const r = Math.max(car.w, car.h) * 0.62;
-            ctx.fillStyle = "rgba(56,160,255,0.18)";
-            ctx.beginPath();
-            ctx.arc(0, 0, r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = "rgba(120,190,255,0.35)";
-            ctx.lineWidth = 1.5;
-            ctx.stroke();
-          }
           ctx.restore();
           if (v === p || v.hp < car.hp * 0.63) {
             const pct = Math.max(0, v.hp / car.hp);
@@ -814,6 +796,23 @@ function ArenaGame() {
             ctx.fillRect(v.x - 23, v.y - 47, 46, 4);
             ctx.fillStyle = v === p ? PAL.lime : PAL.red;
             ctx.fillRect(v.x - 23, v.y - 47, 46 * pct, 4);
+          }
+          if (v === p) {
+            // yellow "YOU" tag above the player's car
+            const tx = v.x, ty = v.y - 66;
+            ctx.fillStyle = "#ffe23d";
+            ctx.fillRect(tx - 17, ty - 8, 34, 16);
+            ctx.beginPath();
+            ctx.moveTo(tx - 4, ty + 8);
+            ctx.lineTo(tx + 4, ty + 8);
+            ctx.lineTo(tx, ty + 13);
+            ctx.closePath();
+            ctx.fill();
+            ctx.fillStyle = "#1a0b3d";
+            ctx.font = '9px "Press Start 2P", monospace';
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("YOU", tx, ty + 1);
           }
         }
         for (const b of g.bullets)
