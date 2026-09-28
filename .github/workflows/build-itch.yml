@@ -1,7 +1,10 @@
 name: Manual Build for itch.io
 
-# Manual only: Actions tab -> "Manual Build for itch.io" -> Run workflow.
+# Runs automatically on every push to main, and can also be run by hand:
+# Actions tab -> "Manual Build for itch.io" -> Run workflow.
 on:
+  push:
+    branches: [main, master]
   workflow_dispatch: {}
 
 permissions:
@@ -45,6 +48,6 @@ jobs:
         with:
           tag_name: latest-build
           name: Latest itch.io build
-          body: Manual build. Download the .zip below and upload it directly to itch.io (Kind of project - HTML).
+          body: Automatically rebuilt from the latest push. Download the .zip below and upload it directly to itch.io (Kind of project - HTML).
           make_latest: true
           files: ${{ steps.find_zip.outputs.zip_path }}
