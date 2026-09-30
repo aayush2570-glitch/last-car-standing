@@ -61,6 +61,10 @@ type Vehicle = {
   hit: number;
   speedT: number;
   dblT: number;
+  dodgeT: number;
+  dodgeDir: number;
+  dodgeAng: number;
+  react: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -206,6 +210,10 @@ function ArenaGame() {
       hit: 0,
       speedT: 0,
       dblT: 0,
+      dodgeT: 0,
+      dodgeDir: 1,
+      dodgeAng: 0,
+      react: 0,
     };
     const rivals: Vehicle[] = [];
     for (let i = 0; i < TOTAL - 1; i++) {
@@ -230,6 +238,10 @@ function ArenaGame() {
         hit: 0,
         speedT: 0,
         dblT: 0,
+        dodgeT: 0,
+        dodgeDir: 1,
+        dodgeAng: 0,
+        react: 0,
       });
     }
     fxRef.current = new Fx();
@@ -626,6 +638,40 @@ function ArenaGame() {
         bot.y -=
           Math.cos(bot.angle) * bSpeed * pace * dt -
           (bot.strafe < 0 ? Math.sin(bot.angle) * 28 : 0) * dt;
+        // dodge: spot incoming enemy bullets on a collision course and sidestep across their path
+        bot.dodgeT -= dt;
+        bot.react -= dt;
+        if (bot.dodgeT <= 0 && bot.react <= 0) {
+          let urgent = 99;
+          for (const b of g.bullets) {
+            if (b.owner === bot || b.life <= 0) continue;
+            const rx = bot.x - b.x,
+              ry = bot.y - b.y;
+            const sp2 = b.vx * b.vx + b.vy * b.vy;
+            const tc = (rx * b.vx + ry * b.vy) / sp2; // time to closest approach
+            if (tc <= 0 || tc > 0.85 || tc >= urgent) continue;
+            const cx = rx - b.vx * tc,
+              cy = ry - b.vy * tc;
+            if (Math.hypot(cx, cy) > 46) continue;
+            urgent = tc;
+            // sidestep to the side the bot is already offset toward (perpendicular to the shot)
+            const side = b.vx * ry - b.vy * rx >= 0 ? 1 : -1;
+            bot.dodgeDir = side;
+            bot.dodgeAng = Math.atan2(b.vx, -b.vy);
+          }
+          if (urgent < 99) {
+            // not perfect: ~20% of the time a bot reacts too late
+            if (Math.random() < 0.8) bot.dodgeT = 0.32;
+            else bot.react = 0.4;
+          }
+        }
+        if (bot.dodgeT > 0) {
+          const dvx = Math.cos(bot.dodgeAng) * bot.dodgeDir,
+            dvy = Math.sin(bot.dodgeAng) * bot.dodgeDir;
+          bot.x += dvx * 210 * dt;
+          bot.y += dvy * 210 * dt;
+          if (Math.random() < dt * 14) fx.dust(bot.x, bot.y);
+        }
         collide(bot);
         if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
           const aim = desired + (Math.random() - 0.5) * 0.2;
