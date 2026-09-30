@@ -59,7 +59,11 @@ type Vehicle = {
   strafe: number;
   carId: number;
   hit: number;
+  speedT: number;
+  dblT: number;
 };
+type PowerKind = "health" | "speed" | "double";
+type Powerup = { x: number; y: number; kind: PowerKind; life: number };
 type Projectile = {
   x: number;
   y: number;
@@ -79,6 +83,8 @@ type Game = {
   kills: number;
   over: { won: boolean; position: number; t: number } | null;
   trail: number;
+  powerups: Powerup[];
+  spawnT: number;
 };
 type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
 type Show = {
@@ -116,6 +122,14 @@ const blocks: [number, number, number, number][] = [
   [580, 900, 80, 72],
 ];
 const TARGETS = 7;
+const CAR_RADIUS = 27;
+const POWER_KINDS: PowerKind[] = ["health", "speed", "double"];
+const POWER_COLOR: Record<PowerKind, string> = {
+  health: "#3dff7a",
+  speed: "#2ef2ff",
+  double: "#ffe23d",
+};
+const POWER_LABEL: Record<PowerKind, string> = { health: "+", speed: "»", double: "II" };
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const shotInterval = (c: Car) => (1 - c.fireRate / 140) * 0.53 + 0.14;
@@ -190,6 +204,8 @@ function ArenaGame() {
       strafe: 0,
       carId: idx,
       hit: 0,
+      speedT: 0,
+      dblT: 0,
     };
     const rivals: Vehicle[] = [];
     for (let i = 0; i < TOTAL - 1; i++) {
@@ -212,6 +228,8 @@ function ArenaGame() {
         strafe: 0,
         carId: id,
         hit: 0,
+        speedT: 0,
+        dblT: 0,
       });
     }
     fxRef.current = new Fx();
@@ -224,6 +242,8 @@ function ArenaGame() {
       kills: 0,
       over: null,
       trail: 0,
+      powerups: [],
+      spawnT: 1.5,
     };
     keysRef.current.clear();
     pausedRef.current = false;
@@ -541,8 +561,9 @@ function ArenaGame() {
           const target = Math.atan2(side, -forward);
           const delta = ((target - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           p.angle += delta * Math.min(1, dt * 4.2);
-          p.x += Math.sin(p.angle) * (stats.speed * 2.15) * dt;
-          p.y -= Math.cos(p.angle) * (stats.speed * 2.15) * dt;
+          const pSpeed = stats.speed * 2.15 * (p.speedT > 0 ? 1.6 : 1);
+          p.x += Math.sin(p.angle) * pSpeed * dt;
+          p.y -= Math.cos(p.angle) * pSpeed * dt;
           g.trail -= dt;
           if (g.trail <= 0) {
             g.trail = 0.05;
@@ -553,15 +574,17 @@ function ArenaGame() {
         if ((keys.has("5") || keys.has(" ")) && p.cooldown <= 0) {
           const tx = p.x + Math.sin(p.angle) * (stats.h * 0.57),
             ty = p.y - Math.cos(p.angle) * (stats.h * 0.57);
-          g.bullets.push({
-            x: tx,
-            y: ty,
-            vx: Math.sin(p.angle) * 570,
-            vy: -Math.cos(p.angle) * 570,
-            owner: p,
-            life: 2.2,
-            damage: stats.damage * 0.16,
-          });
+          for (const off of p.dblT > 0 ? [-9, 9] : [0]) {
+            g.bullets.push({
+              x: tx + Math.cos(p.angle) * off,
+              y: ty + Math.sin(p.angle) * off,
+              vx: Math.sin(p.angle) * 570,
+              vy: -Math.cos(p.angle) * 570,
+              owner: p,
+              life: 2.2,
+              damage: stats.damage * 0.16,
+            });
+          }
           p.cooldown = shotInterval(stats);
           fx.muzzle(tx, ty, p.angle, PAL.friendly);
           fx.shell(p.x + Math.sin(p.angle) * 14, p.y - Math.cos(p.angle) * 14, p.angle);
@@ -575,45 +598,123 @@ function ArenaGame() {
           (x) => x.alive && x !== bot && !(g.over && x === p && !p.alive),
         );
         if (!targets.length) continue;
-        let target = targets[0] as Vehicle;
+        let target: { x: number; y: number } = targets[0] as Vehicle;
         for (const c of targets)
           if (Math.hypot(c.x - bot.x, c.y - bot.y) < Math.hypot(target.x - bot.x, target.y - bot.y))
             target = c;
+        // power-up bubbles come first: every bot heads for the nearest one instead of fighting
+        let pu: Powerup | null = null;
+        for (const q of g.powerups)
+          if (!pu || Math.hypot(q.x - bot.x, q.y - bot.y) < Math.hypot(pu.x - bot.x, pu.y - bot.y))
+            pu = q;
+        if (pu) target = pu;
         const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
         const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
         const delta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        bot.angle += Math.max(-1, Math.min(1, delta)) * dt * (distance < 310 ? 0.5 : 1.8);
+        bot.angle += Math.max(-1, Math.min(1, delta)) * dt * (pu ? 3 : distance < 310 ? 0.5 : 1.8);
         bot.drift -= dt;
         if (bot.drift <= 0) {
           bot.drift = 1.8 + Math.random() * 3.8;
           bot.strafe = -0.8 - Math.random() * 1.2;
         }
         bot.strafe = Math.min(0, bot.strafe + dt);
-        const pace = distance < 260 ? -0.38 : distance < 410 ? 0.28 : 0.7;
+        const pace = pu ? 0.9 : distance < 260 ? -0.38 : distance < 410 ? 0.28 : 0.7;
+        const bSpeed = 96 * (bot.speedT > 0 ? 1.6 : 1);
         bot.x +=
-          Math.sin(bot.angle) * 96 * pace * dt +
+          Math.sin(bot.angle) * bSpeed * pace * dt +
           (bot.strafe < 0 ? Math.cos(bot.angle) * 28 : 0) * dt;
         bot.y -=
-          Math.cos(bot.angle) * 96 * pace * dt -
+          Math.cos(bot.angle) * bSpeed * pace * dt -
           (bot.strafe < 0 ? Math.sin(bot.angle) * 28 : 0) * dt;
         collide(bot);
-        if (distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
+        if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
           const aim = desired + (Math.random() - 0.5) * 0.2;
           const mx = bot.x + Math.sin(aim) * (carAt(bot.carId).h * 0.5),
             my = bot.y - Math.cos(aim) * (carAt(bot.carId).h * 0.5);
-          g.bullets.push({
-            x: mx,
-            y: my,
-            vx: Math.sin(aim) * 400,
-            vy: -Math.cos(aim) * 400,
-            owner: bot,
-            life: 2.5,
-            damage: 5.3,
-          });
+          for (const off of bot.dblT > 0 ? [-9, 9] : [0]) {
+            g.bullets.push({
+              x: mx + Math.cos(aim) * off,
+              y: my + Math.sin(aim) * off,
+              vx: Math.sin(aim) * 400,
+              vy: -Math.cos(aim) * 400,
+              owner: bot,
+              life: 2.5,
+              damage: 5.3,
+            });
+          }
           bot.cooldown = 0.52 + Math.random() * 0.58;
           fx.muzzle(mx, my, aim, PAL.hostile);
         }
       }
+      // car-to-car collisions: solid bodies push each other apart
+      for (let pass = 0; pass < 2; pass++) {
+        for (let i = 0; i < g.cars.length; i++) {
+          const a = g.cars[i] as Vehicle;
+          if (!a.alive) continue;
+          for (let j = i + 1; j < g.cars.length; j++) {
+            const b = g.cars[j] as Vehicle;
+            if (!b.alive) continue;
+            let dx = b.x - a.x,
+              dy = b.y - a.y;
+            let d = Math.hypot(dx, dy);
+            const min = CAR_RADIUS * 2;
+            if (d >= min) continue;
+            if (d < 0.001) {
+              const a0 = Math.random() * Math.PI * 2;
+              dx = Math.cos(a0);
+              dy = Math.sin(a0);
+              d = 1;
+            }
+            const push = (min - d) / 2;
+            a.x -= (dx / d) * push;
+            a.y -= (dy / d) * push;
+            b.x += (dx / d) * push;
+            b.y += (dy / d) * push;
+            if (pass === 0 && push > 3) {
+              fx.impact((a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(dx, -dy), PAL.yellow, 3);
+              if (a === p || b === p) fx.shake = Math.max(fx.shake, 2);
+            }
+          }
+        }
+        for (const v of g.cars) if (v.alive) collide(v);
+      }
+      // power-up bubbles: spawn, expire, pick up
+      g.spawnT -= dt;
+      if (g.spawnT <= 0 && g.powerups.length < 4 && !g.over) {
+        g.spawnT = 5 + Math.random() * 3;
+        for (let tries = 0; tries < 20; tries++) {
+          const x = 120 + Math.random() * (WORLD.width - 240),
+            y = 120 + Math.random() * (WORLD.height - 240);
+          if (
+            blocks.some(
+              ([bx, by, bw, bh]) =>
+                x > bx - 40 && x < bx + bw + 40 && y > by - 40 && y < by + bh + 40,
+            )
+          )
+            continue;
+          g.powerups.push({
+            x,
+            y,
+            kind: POWER_KINDS[Math.floor(Math.random() * POWER_KINDS.length)] as PowerKind,
+            life: 25,
+          });
+          break;
+        }
+      }
+      for (const q of g.powerups) q.life -= dt;
+      for (const q of g.powerups) {
+        for (const v of g.cars) {
+          if (!v.alive || q.life <= 0 || Math.hypot(q.x - v.x, q.y - v.y) > 42) continue;
+          q.life = 0;
+          if (q.kind === "health")
+            v.hp = Math.min(carAt(v.carId).hp, v.hp + carAt(v.carId).hp * 0.35);
+          else if (q.kind === "speed") v.speedT = 10 + Math.random() * 2;
+          else v.dblT = 10;
+          fx.impact(q.x, q.y, 0, POWER_COLOR[q.kind], 12);
+          if (v === p) sfx.blip();
+        }
+      }
+      g.powerups = g.powerups.filter((q) => q.life > 0);
       for (const b of g.bullets) {
         b.x += b.vx * dt;
         b.y += b.vy * dt;
@@ -650,6 +751,8 @@ function ArenaGame() {
       p.cooldown = Math.max(0, p.cooldown - dt);
       for (const v of g.cars) {
         v.hit = Math.max(0, v.hit - dt);
+        v.speedT = Math.max(0, v.speedT - dt);
+        v.dblT = Math.max(0, v.dblT - dt);
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
       }
       const alive = g.cars.filter((x) => x.alive).length;
@@ -722,6 +825,25 @@ function ArenaGame() {
       blocks.forEach(([x, y, w, h], i) => drawBox(ctx, x, y, w, h, i));
       // tyre dust, sparks, smoke sit under the cars
       if (g) {
+        for (const q of g.powerups) {
+          const col = POWER_COLOR[q.kind];
+          const bob = 1 + 0.12 * Math.sin(t * 5 + q.x);
+          const blink = q.life < 5 && Math.floor(t * 6) % 2 === 0 ? 0.35 : 1;
+          ctx.globalAlpha = blink;
+          ctx.fillStyle = hexA(col, 0.22);
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 30 * bob, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = col;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.fillStyle = col;
+          ctx.font = '14px "Press Start 2P", monospace';
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(POWER_LABEL[q.kind], q.x, q.y + 1);
+          ctx.globalAlpha = 1;
+        }
         for (const v of g.cars) {
           if (!v.alive) continue;
           const car = carAt(v.carId);
@@ -741,6 +863,20 @@ function ArenaGame() {
           ctx.stroke();
           if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
           else drawFallbackCar(ctx, car, car.w, car.h);
+          if (v.speedT > 0) {
+            ctx.strokeStyle = POWER_COLOR.speed;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 4, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          if (v.dblT > 0) {
+            ctx.strokeStyle = POWER_COLOR.double;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 9, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           ctx.restore();
           if (v === p || v.hp < car.hp * 0.63) {
             const pct = Math.max(0, v.hp / car.hp);
