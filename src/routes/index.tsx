@@ -65,8 +65,8 @@ type Vehicle = {
   dodgeDir: number;
   dodgeAng: number;
   react: number;
-  dvx: number;
-  dvy: number;
+  strafeAng: number;
+  trail: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -129,6 +129,8 @@ const blocks: [number, number, number, number][] = [
 ];
 const TARGETS = 7;
 const CAR_RADIUS = 27;
+/** bots drive with the same physics as the player; this scales their top speed (1 = same as player) */
+const BOT_SPEED = 0.9;
 const POWER_KINDS: PowerKind[] = ["health", "speed", "double"];
 const POWER_COLOR: Record<PowerKind, string> = {
   health: "#3dff7a",
@@ -216,8 +218,8 @@ function ArenaGame() {
       dodgeDir: 1,
       dodgeAng: 0,
       react: 0,
-      dvx: 0,
-      dvy: 0,
+      strafeAng: 0,
+      trail: 0,
     };
     const rivals: Vehicle[] = [];
     for (let i = 0; i < TOTAL - 1; i++) {
@@ -246,8 +248,8 @@ function ArenaGame() {
         dodgeDir: 1,
         dodgeAng: 0,
         react: 0,
-        dvx: 0,
-        dvy: 0,
+        strafeAng: 0,
+        trail: 0,
       });
     }
     fxRef.current = new Fx();
@@ -633,22 +635,7 @@ function ArenaGame() {
         if (pu) target = pu;
         const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
         const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
-        const delta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        bot.angle += Math.max(-1, Math.min(1, delta)) * dt * (pu ? 3 : distance < 310 ? 0.5 : 1.8);
-        bot.drift -= dt;
-        if (bot.drift <= 0) {
-          bot.drift = 1.8 + Math.random() * 3.8;
-          bot.strafe = -0.8 - Math.random() * 1.2;
-        }
-        bot.strafe = Math.min(0, bot.strafe + dt);
-        const pace = pu ? 0.9 : distance < 260 ? -0.38 : distance < 410 ? 0.28 : 0.7;
-        const bSpeed = 96 * (bot.speedT > 0 ? 1.6 : 1);
-        bot.x +=
-          Math.sin(bot.angle) * bSpeed * pace * dt +
-          (bot.strafe < 0 ? Math.cos(bot.angle) * 28 : 0) * dt;
-        bot.y -=
-          Math.cos(bot.angle) * bSpeed * pace * dt -
-          (bot.strafe < 0 ? Math.sin(bot.angle) * 28 : 0) * dt;
+        const aimDelta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         // dodge: spot incoming enemy bullets on a collision course and sidestep across their path
         bot.dodgeT -= dt;
         bot.react -= dt;
@@ -671,14 +658,7 @@ function ArenaGame() {
             // snap the sidestep to up / down / left / right, like WASD on the player
             const px = Math.cos(Math.atan2(b.vx, -b.vy)) * side,
               py = Math.sin(Math.atan2(b.vx, -b.vy)) * side;
-            bot.dodgeAng =
-              Math.abs(px) > Math.abs(py)
-                ? px > 0
-                  ? 0
-                  : Math.PI
-                : py > 0
-                  ? Math.PI / 2
-                  : -Math.PI / 2;
+            bot.dodgeAng = Math.round(Math.atan2(px, -py) / (Math.PI / 2)) * (Math.PI / 2);
           }
           if (urgent < 99) {
             // not perfect: ~20% of the time a bot reacts too late
@@ -686,20 +666,38 @@ function ArenaGame() {
             else bot.react = 0.4;
           }
         }
-        // ease the sidestep in and out (no instant jumps) so it reads as driving, not teleporting
-        const tvx = bot.dodgeT > 0 ? Math.cos(bot.dodgeAng) * 150 : 0,
-          tvy = bot.dodgeT > 0 ? Math.sin(bot.dodgeAng) * 150 : 0;
-        const ease = Math.min(1, dt * 7);
-        bot.dvx += (tvx - bot.dvx) * ease;
-        bot.dvy += (tvy - bot.dvy) * ease;
-        bot.x += bot.dvx * dt;
-        bot.y += bot.dvy * dt;
-        if (Math.hypot(bot.dvx, bot.dvy) > 40 && Math.random() < dt * 14) fx.dust(bot.x, bot.y);
+        // strafe burst timer: now and then the bot taps a straight up/down/left/right key
+        bot.drift -= dt;
+        if (bot.drift <= 0) {
+          bot.drift = 1.6 + Math.random() * 2.6;
+          bot.strafe = 0.7 + Math.random() * 0.5;
+          const sideAng = desired + (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 2);
+          bot.strafeAng = Math.round(sideAng / (Math.PI / 2)) * (Math.PI / 2);
+        }
+        bot.strafe = Math.max(0, bot.strafe - dt);
+        // pick the "key" the bot presses: it then turns and drives forward exactly like the player
+        let heading = desired;
+        let speedMul = 1;
+        if (bot.dodgeT > 0) heading = bot.dodgeAng;
+        else if (!pu && bot.strafe > 0 && distance < 520) heading = bot.strafeAng;
+        else if (!pu && distance < 330) speedMul = 0.3; // close in: tap forward while lining up the shot
+        const turn = ((heading - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        bot.angle += turn * Math.min(1, dt * 4.2);
+        const bSpeed =
+          carAt(bot.carId).speed * 2.15 * BOT_SPEED * speedMul * (bot.speedT > 0 ? 1.6 : 1);
+        bot.x += Math.sin(bot.angle) * bSpeed * dt;
+        bot.y -= Math.cos(bot.angle) * bSpeed * dt;
+        bot.trail -= dt;
+        if (bot.trail <= 0 && speedMul > 0.5) {
+          bot.trail = 0.05;
+          fx.dust(bot.x - Math.sin(bot.angle) * 32, bot.y + Math.cos(bot.angle) * 32);
+        }
         collide(bot);
-        if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
-          const aim = desired + (Math.random() - 0.5) * 0.2;
-          const mx = bot.x + Math.sin(aim) * (carAt(bot.carId).h * 0.5),
-            my = bot.y - Math.cos(aim) * (carAt(bot.carId).h * 0.5);
+        if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(aimDelta) < 0.22) {
+          // like the player, bots fire in the direction the car is facing
+          const aim = bot.angle + (Math.random() - 0.5) * 0.08;
+          const mx = bot.x + Math.sin(aim) * (carAt(bot.carId).h * 0.57),
+            my = bot.y - Math.cos(aim) * (carAt(bot.carId).h * 0.57);
           for (const off of bot.dblT > 0 ? [-9, 9] : [0]) {
             g.bullets.push({
               x: mx + Math.cos(aim) * off,
