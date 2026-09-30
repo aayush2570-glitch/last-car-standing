@@ -614,11 +614,16 @@ function ArenaGame() {
         for (const c of targets)
           if (Math.hypot(c.x - bot.x, c.y - bot.y) < Math.hypot(target.x - bot.x, target.y - bot.y))
             target = c;
-        // power-up bubbles come first: every bot heads for the nearest one instead of fighting
+        // fighting comes first: bots only go for a power-up bubble when no enemy is near
         let pu: Powerup | null = null;
-        for (const q of g.powerups)
-          if (!pu || Math.hypot(q.x - bot.x, q.y - bot.y) < Math.hypot(pu.x - bot.x, pu.y - bot.y))
-            pu = q;
+        const enemyNear = Math.hypot(target.x - bot.x, target.y - bot.y) < 650;
+        if (!enemyNear)
+          for (const q of g.powerups)
+            if (
+              !pu ||
+              Math.hypot(q.x - bot.x, q.y - bot.y) < Math.hypot(pu.x - bot.x, pu.y - bot.y)
+            )
+              pu = q;
         if (pu) target = pu;
         const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
         const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
