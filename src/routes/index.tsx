@@ -65,6 +65,8 @@ type Vehicle = {
   dodgeDir: number;
   dodgeAng: number;
   react: number;
+  dvx: number;
+  dvy: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -214,6 +216,8 @@ function ArenaGame() {
       dodgeDir: 1,
       dodgeAng: 0,
       react: 0,
+      dvx: 0,
+      dvy: 0,
     };
     const rivals: Vehicle[] = [];
     for (let i = 0; i < TOTAL - 1; i++) {
@@ -242,6 +246,8 @@ function ArenaGame() {
         dodgeDir: 1,
         dodgeAng: 0,
         react: 0,
+        dvx: 0,
+        dvy: 0,
       });
     }
     fxRef.current = new Fx();
@@ -662,21 +668,33 @@ function ArenaGame() {
             // sidestep to the side the bot is already offset toward (perpendicular to the shot)
             const side = b.vx * ry - b.vy * rx >= 0 ? 1 : -1;
             bot.dodgeDir = side;
-            bot.dodgeAng = Math.atan2(b.vx, -b.vy);
+            // snap the sidestep to up / down / left / right, like WASD on the player
+            const px = Math.cos(Math.atan2(b.vx, -b.vy)) * side,
+              py = Math.sin(Math.atan2(b.vx, -b.vy)) * side;
+            bot.dodgeAng =
+              Math.abs(px) > Math.abs(py)
+                ? px > 0
+                  ? 0
+                  : Math.PI
+                : py > 0
+                  ? Math.PI / 2
+                  : -Math.PI / 2;
           }
           if (urgent < 99) {
             // not perfect: ~20% of the time a bot reacts too late
-            if (Math.random() < 0.8) bot.dodgeT = 0.32;
+            if (Math.random() < 0.8) bot.dodgeT = 0.5;
             else bot.react = 0.4;
           }
         }
-        if (bot.dodgeT > 0) {
-          const dvx = Math.cos(bot.dodgeAng) * bot.dodgeDir,
-            dvy = Math.sin(bot.dodgeAng) * bot.dodgeDir;
-          bot.x += dvx * 210 * dt;
-          bot.y += dvy * 210 * dt;
-          if (Math.random() < dt * 14) fx.dust(bot.x, bot.y);
-        }
+        // ease the sidestep in and out (no instant jumps) so it reads as driving, not teleporting
+        const tvx = bot.dodgeT > 0 ? Math.cos(bot.dodgeAng) * 150 : 0,
+          tvy = bot.dodgeT > 0 ? Math.sin(bot.dodgeAng) * 150 : 0;
+        const ease = Math.min(1, dt * 7);
+        bot.dvx += (tvx - bot.dvx) * ease;
+        bot.dvy += (tvy - bot.dvy) * ease;
+        bot.x += bot.dvx * dt;
+        bot.y += bot.dvy * dt;
+        if (Math.hypot(bot.dvx, bot.dvy) > 40 && Math.random() < dt * 14) fx.dust(bot.x, bot.y);
         collide(bot);
         if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(delta) < 1.0) {
           const aim = desired + (Math.random() - 0.5) * 0.2;
