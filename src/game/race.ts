@@ -1,9 +1,12 @@
 import { PAL, carAt, cars, drawFallbackCar, getSprites, spriteReady } from "./cars";
+import { getSkins, type SkinKey } from "./skins";
 import { Fx, type Sfx } from "./fx";
 import crateImg from "@/assets/race/crates.webp";
 import drumImg from "@/assets/race/drum.webp";
 import jerseyImg from "@/assets/race/jersey.webp";
 import laserImg from "@/assets/race/laser.webp";
+import mineAImg from "@/assets/race/mine_a.webp";
+import mineBImg from "@/assets/race/mine_b.webp";
 import nitroImg from "@/assets/race/nitro.webp";
 import oilImg from "@/assets/race/oil.webp";
 import sawhorseImg from "@/assets/race/sawhorse.webp";
@@ -15,6 +18,8 @@ const PROP_URLS = {
   drum: drumImg,
   jersey: jerseyImg,
   laser: laserImg,
+  mineA: mineAImg,
+  mineB: mineBImg,
   nitro: nitroImg,
   oil: oilImg,
   sawhorse: sawhorseImg,
@@ -36,7 +41,7 @@ function getProps() {
 }
 
 /**
- * SPEED mode: top-down race through four zones (neon city, sunset canyon, frozen highway, lava inferno).
+ * SPEED mode: top-down race through four zones (neon city, sunrise beach, frozen highway, lava inferno).
  * Cars accelerate on their own, you steer. NITRO is no longer free: grab glowing nitro canisters
  * (guarded by hazards), then HOLD the nitro key / button to burn the tank for a huge speed boost.
  * Obstacles: drums, barriers, water cannons, cones, oil slicks, mines, explosive drums and slow trucks.
@@ -115,10 +120,10 @@ export const ZONES: Zone[] = [
     line: "#ffffff",
   },
   {
-    name: "SUNSET CANYON",
+    name: "SUNRISE BEACH",
     decor: "desert",
-    ground: "#3a1a10",
-    grid: "#6b3418",
+    ground: "#7a5832",
+    grid: "#a47a45",
     floor: "#4a2a22",
     floorAlt: "#563128",
     bldg: "#8a4a26",
@@ -1301,6 +1306,8 @@ export class RaceView {
         return P.oil;
       case "truck":
         return P.truck;
+      case "mine":
+        return [P.mineA, P.mineB][Math.floor((o.t0 / PERIOD) * 2)];
       case "crates":
         return P.crates;
       case "barrier":
@@ -1333,6 +1340,9 @@ export class RaceView {
     } else if (k === "oil") {
       w = o.hw * 2.2;
       h = w / asp;
+    } else if (k === "mine") {
+      w = o.hw * 3.6;
+      h = w / asp;
     } else if (k === "crates") {
       w = o.hw * 2.2;
       h = w / asp;
@@ -1359,7 +1369,77 @@ export class RaceView {
         k === "drum" || k === "crates" ? (o.gone > 0 ? clamp(o.gone * 2, 0, 1) : 1) : 1;
     }
     ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    if (k === "mine") {
+      // blinking warning glow + pulsing core on top of the artwork
+      const blink = Math.floor(this.lastNow * 4 + o.t0) % 2;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.fillStyle = "#ff2b4d";
+      ctx.globalAlpha = blink ? 0.7 : 0.12;
+      disc(ctx, 0, 0, w * 0.12);
+      ctx.globalAlpha = blink ? 0.3 : 0.1;
+      disc(ctx, 0, 0, 32);
+      ctx.globalCompositeOperation = "source-over";
+    }
     ctx.restore();
+  }
+
+  /**
+   * Zone artwork beside the road (cyber towers, beach huts and palms, snow cabins and pines, volcanoes).
+   * Returns false while the sprites are still loading so the procedural scenery is used meanwhile.
+   */
+  private drawSkin(
+    ctx: CanvasRenderingContext2D,
+    decor: Decor,
+    i: number,
+    s: number,
+    t: number,
+    L: number,
+    Rt: number,
+    react: (y: number) => { g: number; col: string },
+  ): boolean {
+    const key: SkinKey =
+      decor === "city" ? "cyber" : decor === "desert" ? "beach" : decor === "ice" ? "snow" : "lava";
+    const set = getSkins()[key];
+    const first = set.big[0];
+    if (!first || !spriteReady(first.img) || !set.small.length) return false;
+    const place = (list: typeof set.big, seed: number, y: number, gap: number) => {
+      const sp = list[Math.floor(hs(i, s * 3 + seed) * list.length)];
+      if (!sp || !spriteReady(sp.img)) return;
+      const cx = roadX(y) + s * (HALF + gap + sp.w / 2);
+      if (cx + sp.w / 2 < L || cx - sp.w / 2 > Rt) return;
+      if (key === "lava") {
+        // molten glow pooling around the base
+        ctx.globalCompositeOperation = "lighter";
+        ctx.fillStyle = "#ff4b2b";
+        ctx.globalAlpha = 0.1 + 0.06 * Math.sin(t * 3 + i + s);
+        ctx.beginPath();
+        ctx.ellipse(cx, y + sp.h * 0.3, sp.w * 0.62, sp.h * 0.26, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalCompositeOperation = "source-over";
+      }
+      ctx.fillStyle = PAL.shadow;
+      ctx.globalAlpha = 0.4;
+      ctx.beginPath();
+      ctx.ellipse(cx + sp.w * 0.06, y + sp.h * 0.36, sp.w * 0.42, sp.h * 0.12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.drawImage(sp.img, cx - sp.w / 2, y - sp.h / 2, sp.w, sp.h);
+      if (key === "cyber") {
+        // neon flares up as cars race past
+        const r = react(y);
+        if (r.g > 0.15) {
+          ctx.globalCompositeOperation = "lighter";
+          ctx.globalAlpha = r.g * 0.4;
+          ctx.drawImage(sp.img, cx - sp.w / 2, y - sp.h / 2, sp.w, sp.h);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+        }
+      }
+    };
+    const y = i * 220 + hs(i, s + 4) * 40;
+    place(set.big, 11, y, 36 + hs(i, s + 3) * 50);
+    place(set.small, 23, y + 110, 6 + hs(i, s + 6) * 26);
+    return true;
   }
 
   draw(ctx: CanvasRenderingContext2D, W: number, H: number, now: number) {
@@ -1426,6 +1506,7 @@ export class RaceView {
         const h = hs(i, s),
           y = i * 220 + (z.decor === "city" ? 0 : hs(i, s + 4) * 60),
           rx = roadX(y);
+        if (this.drawSkin(ctx, z.decor, i, s, t, L, Rt, react)) continue;
         if (z.decor === "city") {
           const bw = 80 + h * 90,
             bh = 170 + hs(i, s + 9) * 40,
