@@ -323,6 +323,9 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 .steer-btn:active { background: rgba(46,242,255,.3); border-color: #2ef2ff; }
 .steer-btn.left { left: 18px; }
 .steer-btn.right { right: 18px; }
+.steer-btn.nitro-btn { left: 50%; margin-left: -42px; bottom: 96px; width: 84px; height: 84px; border-radius: 50%; color: #4dc8ff; border-color: #4dc8ff; background: rgba(30,107,255,.35); box-shadow: 0 0 18px #2e9bff, 4px 4px 0 #000; }
+.steer-btn.nitro-btn:active { background: rgba(77,200,255,.6); color: #fff; }
+@media (min-width: 900px) and (pointer: fine) { .steer-btn.nitro-btn { display: none; } }
 @media (min-width: 900px) and (pointer: fine) { .steer-btn { opacity: .35; } }
 .mode-pick .arcade-btn { width: 100%; }
 .mode-pick .speed-btn { background: #ff7a1a; border-color: #ffe23d; color: #1a0b3d; }

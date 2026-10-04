@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
-import { ChevronLeft, ChevronRight, Play, Trophy, Volume2, VolumeX } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, Trophy, Volume2, VolumeX, Zap } from "lucide-react";
 import { RaceView, type RaceResult } from "./race";
 import type { Sfx } from "./fx";
 
@@ -17,7 +17,7 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toFixed(2).padStart
 /** SPEED mode screen: canvas race + steering buttons for touch + result card. */
 export function RaceMode({ carIndex, keys, sfx, muted, onToggleMute, onExit }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const touch = useRef({ l: false, r: false });
+  const touch = useRef({ l: false, r: false, n: false });
   const pausedRef = useRef(false);
   const [run, setRun] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -56,7 +56,9 @@ export function RaceMode({ carIndex, keys, sfx, muted, onToggleMute, onExit }: P
       const steer =
         (k.has("arrowright") || k.has("d") || touch.current.r ? 1 : 0) -
         (k.has("arrowleft") || k.has("a") || touch.current.l ? 1 : 0);
-      if (!pausedRef.current) view.update(dt, steer, sfx);
+      const nitro =
+        k.has(" ") || k.has("shift") || k.has("arrowup") || k.has("w") || touch.current.n;
+      if (!pausedRef.current) view.update(dt, steer, nitro, sfx);
       view.draw(ctx, w, h, now);
       if (view.result && !shown) {
         shown = true;
@@ -87,7 +89,7 @@ export function RaceMode({ carIndex, keys, sfx, muted, onToggleMute, onExit }: P
     else sfx.startMusic();
   };
 
-  const hold = (side: "l" | "r") => ({
+  const hold = (side: "l" | "r" | "n") => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
       sfx.unlock();
@@ -129,7 +131,13 @@ export function RaceMode({ carIndex, keys, sfx, muted, onToggleMute, onExit }: P
           <button type="button" className="steer-btn right" aria-label="Steer right" {...hold("r")}>
             <ChevronRight size={38} />
           </button>
-          <p className="race-tip">← → / A D TO STEER · HIT TOP SPEED FOR FIRE · DODGE EVERYTHING</p>
+          <button type="button" className="steer-btn nitro-btn" aria-label="Nitro" {...hold("n")}>
+            <Zap size={34} />
+          </button>
+          <p className="race-tip">
+            ← → / A D STEER · HOLD SPACE FOR NITRO · GRAB BLUE CANISTERS · MINES & TRUCKS BLOW YOU
+            UP
+          </p>
         </>
       )}
       {paused && !res && (
@@ -195,7 +203,8 @@ export function RaceMode({ carIndex, keys, sfx, muted, onToggleMute, onExit }: P
                 </div>
               </div>
               <p className="result-sub">
-                {res.near} NEAR MISSES · {res.hits} CRASHES
+                {res.near} NEAR MISSES · {res.hits} CRASHES · {res.blasts} WRECKS · {res.nitros}{" "}
+                NITRO
               </p>
               <button
                 type="button"
