@@ -314,3 +314,16 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 @media (prefers-reduced-motion: reduce) {
   .crt, .start-btn, .tile-active, .credit, .map-player { animation: none; }
 }
+
+/* ── SPEED race mode + mode picker ── */
+.race-root { position: absolute; left: 0; top: 0; right: 0; bottom: 0; z-index: 20; background: #0b0620; touch-action: none; user-select: none; }
+.race-top { position: absolute; top: 10px; right: 44px; z-index: 40; display: flex; gap: 8px; }
+.race-tip { position: absolute; left: 0; right: 0; bottom: 8px; z-index: 40; margin: 0; text-align: center; font: 7px/1.4 "Press Start 2P", monospace; color: #a99ee0; pointer-events: none; }
+.steer-btn { position: absolute; bottom: 28px; z-index: 40; width: 84px; height: 84px; display: flex; align-items: center; justify-content: center; color: #2ef2ff; background: rgba(18,10,48,.55); border: 3px solid #3a2478; box-shadow: 4px 4px 0 #000; touch-action: none; -webkit-tap-highlight-color: transparent; cursor: pointer; }
+.steer-btn:active { background: rgba(46,242,255,.3); border-color: #2ef2ff; }
+.steer-btn.left { left: 18px; }
+.steer-btn.right { right: 18px; }
+@media (min-width: 900px) and (pointer: fine) { .steer-btn { opacity: .35; } }
+.mode-pick .arcade-btn { width: 100%; }
+.mode-pick .speed-btn { background: #ff7a1a; border-color: #ffe23d; color: #1a0b3d; }
+.mode-pick small { display: block; margin-top: 4px; }

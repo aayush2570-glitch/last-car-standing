@@ -40,6 +40,11 @@ export class Fx {
     this.parts.push({ vx: 0, vy: 0, size: 3, rot: 0, vr: 0, drag: 0, grow: 0, max: p.life, ...p });
   }
 
+  /** Public particle spawner (used by the SPEED race mode). */
+  emit(p: Partial<Particle> & { kind: Kind; x: number; y: number; life: number; color: string }) {
+    this.add(p);
+  }
+
   /** Muzzle flash: bright cone, hot core and a few forward sparks. `angle` 0 = up. */
   muzzle(x: number, y: number, angle: number, color: string) {
     const fx = Math.sin(angle),
@@ -393,5 +398,150 @@ export class Sfx {
   }
   blip() {
     this.tone("square", 620, 980, 0.06, 0.03);
+  }
+
+  /* ───────── SPEED mode: engine, effects and procedural synthwave music ───────── */
+  /** 1 = cruising, 2 = FIRE SPEED (adds lead + faster tempo) */
+  level = 1;
+  private eng: { o: OscillatorNode; g: GainNode } | null = null;
+  private mTimer: ReturnType<typeof setInterval> | null = null;
+  private mNext = 0;
+  private mStep = 0;
+
+  private noise(dur: number, vol: number, freq: number, type: BiquadFilterType = "highpass") {
+    const c = this.ctx;
+    if (!c || this.muted || c.state !== "running") return;
+    const n = Math.floor(c.sampleRate * dur),
+      b = c.createBuffer(1, n, c.sampleRate),
+      d = b.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = c.createBufferSource(),
+      f = c.createBiquadFilter(),
+      g = c.createGain();
+    s.buffer = b;
+    f.type = type;
+    f.frequency.value = freq;
+    g.gain.value = vol;
+    s.connect(f);
+    f.connect(g);
+    g.connect(c.destination);
+    s.start();
+  }
+  beep(f: number, dur = 0.12, vol = 0.05) {
+    this.tone("square", f, f, dur, vol);
+  }
+  crash(big: boolean) {
+    this.noise(0.35, big ? 0.14 : 0.06, big ? 900 : 1500, "lowpass");
+    this.tone("sawtooth", big ? 180 : 240, 40, 0.3, big ? 0.07 : 0.03);
+  }
+  splash() {
+    this.noise(0.45, 0.07, 1800);
+  }
+  ignite() {
+    this.tone("sawtooth", 180, 1800, 0.6, 0.06);
+    this.noise(0.6, 0.06, 700);
+  }
+  chime(n: number) {
+    const f = 660 * Math.pow(1.122, Math.min(n, 10));
+    this.tone("triangle", f, f * 1.5, 0.14, 0.06);
+  }
+  bump() {
+    this.tone("square", 140, 70, 0.08, 0.04);
+  }
+  fanfare() {
+    [523, 659, 784, 1047].forEach((f, i) =>
+      setTimeout(() => this.tone("square", f, f, 0.2, 0.05), i * 110),
+    );
+  }
+  engine(ratio: number, fire: boolean) {
+    const c = this.ctx;
+    if (!c || c.state !== "running") return;
+    if (!this.eng) {
+      const o = c.createOscillator(),
+        g = c.createGain(),
+        f = c.createBiquadFilter();
+      o.type = "sawtooth";
+      f.type = "lowpass";
+      f.frequency.value = 700;
+      g.gain.value = 0;
+      o.connect(f);
+      f.connect(g);
+      g.connect(c.destination);
+      o.start();
+      this.eng = { o, g };
+    }
+    const t = c.currentTime;
+    this.eng.o.frequency.setTargetAtTime(55 + ratio * 210 + (fire ? 40 : 0), t, 0.05);
+    this.eng.g.gain.setTargetAtTime(this.muted ? 0 : 0.02 + ratio * 0.018, t, 0.08);
+  }
+  private mk(t: number, type: OscillatorType, f0: number, f1: number, dur: number, vol: number) {
+    const c = this.ctx;
+    if (!c) return;
+    const o = c.createOscillator(),
+      g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(Math.max(20, f1), t + dur);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g);
+    g.connect(c.destination);
+    o.start(t);
+    o.stop(t + dur + 0.02);
+  }
+  startMusic() {
+    this.stopMusic();
+    const c = this.ctx;
+    if (!c) return;
+    this.mStep = 0;
+    this.mNext = c.currentTime + 0.1;
+    this.mTimer = setInterval(() => this.sched(), 30);
+  }
+  stopMusic() {
+    if (this.mTimer) clearInterval(this.mTimer);
+    this.mTimer = null;
+    try {
+      if (this.eng) {
+        this.eng.g.gain.value = 0;
+        this.eng.o.stop();
+      }
+    } catch {
+      /* already stopped */
+    }
+    this.eng = null;
+  }
+  private sched() {
+    const c = this.ctx;
+    if (!c || c.state !== "running") return;
+    const spb = 60 / (124 + this.level * 14) / 4; // one 16th note
+    while (this.mNext < c.currentTime + 0.15) {
+      const s = this.mStep++,
+        t = this.mNext;
+      this.mNext += spb;
+      if (this.muted) continue;
+      const root = [55, 55, 65.41, 49][(s >> 4) & 3] as number;
+      if (s % 4 === 0) this.mk(t, "sine", 150, 42, 0.14, 0.16);
+      if (s % 2 === 0) this.mk(t, "sawtooth", root * (s % 8 === 6 ? 2 : 1), root, spb * 1.8, 0.05);
+      if (s % 4 === 2) this.mk(t, "square", 9000, 9000, 0.03, 0.012);
+      this.mk(
+        t,
+        "square",
+        root * 4 * ([1, 1.5, 1.2, 2][s % 4] as number),
+        root * 4,
+        spb * 0.9,
+        0.016,
+      );
+      if (this.level > 1) {
+        if (s % 8 === 4) this.mk(t, "sawtooth", 260, 120, 0.12, 0.05);
+        this.mk(
+          t,
+          "triangle",
+          root * 8 * ([1, 1.2, 1.5, 1.8][(s >> 1) % 4] as number),
+          root * 8,
+          spb * 1.4,
+          0.03,
+        );
+      }
+    }
   }
 }

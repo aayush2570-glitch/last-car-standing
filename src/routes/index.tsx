@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PAL, cars, carAt, drawFallbackCar, getSprites, spriteReady, type Car } from "@/game/cars";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
+import { RaceMode } from "@/game/RaceMode";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -153,7 +154,7 @@ const fmtTime = (s: number) =>
 
 function ArenaGame() {
   const [selected, setSelected] = useState(0);
-  const [mode, setMode] = useState<"select" | "playing" | "result">("select");
+  const [mode, setMode] = useState<"select" | "playing" | "result" | "race">("select");
   const [hud, setHud] = useState<{
     hp: number;
     alive: number;
@@ -190,8 +191,12 @@ function ArenaGame() {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const startRef = useRef<() => void>(() => {});
+  const [picking, setPicking] = useState(false);
+  const pickingRef = useRef(false);
+  const askRef = useRef<() => void>(() => {});
+  const raceRef = useRef<() => void>(() => {});
 
-  const setModeSync = useCallback((m: "select" | "playing" | "result") => {
+  const setModeSync = useCallback((m: "select" | "playing" | "result" | "race") => {
     modeRef.current = m;
     if (m === "select") fxRef.current = new Fx(); // drop arena particles so they don't leak into the garage
     setMode(m);
@@ -273,6 +278,22 @@ function ArenaGame() {
     sfxRef.current.blip();
   }, [setModeSync]);
   startRef.current = startMatch;
+
+  /* START asks which mode to play: FFA (classic combat) or SPEED (race) */
+  const setAsk = useCallback((v: boolean) => {
+    pickingRef.current = v;
+    setPicking(v);
+  }, []);
+  askRef.current = () => {
+    setAsk(true);
+    sfxRef.current.blip();
+  };
+  raceRef.current = () => {
+    setAsk(false);
+    keysRef.current.clear();
+    sfxRef.current.blip();
+    setModeSync("race");
+  };
 
   const finishMatch = useCallback(
     (won: boolean, position: number) => {
@@ -999,6 +1020,8 @@ function ArenaGame() {
       if (m === "playing") {
         if (!pausedRef.current) step(dt, now);
         renderArena(t);
+      } else if (m === "race") {
+        /* SPEED mode renders on its own canvas */
       } else if (m === "result" && gameRef.current) renderArena(t);
       else {
         stepShowroom(dt);
@@ -1041,10 +1064,16 @@ function ArenaGame() {
           pausedRef.current = v;
           setPaused(v);
         }
-        if (m === "select") {
+        if (m === "select" && pickingRef.current) {
+          if (key === "enter" || key === "f" || key === "1") {
+            setAsk(false);
+            startRef.current();
+          } else if (key === "s" || key === "2") raceRef.current();
+          else if (key === "escape") setAsk(false);
+        } else if (m === "select") {
           if (key === "arrowleft" || key === "a") pick(selectedRef.current - 1);
           else if (key === "arrowright" || key === "d") pick(selectedRef.current + 1);
-          else if (key === "enter") startRef.current();
+          else if (key === "enter") askRef.current();
         }
       }
       if (down) keysRef.current.add(key);
@@ -1064,7 +1093,7 @@ function ArenaGame() {
       window.removeEventListener("blur", clear);
       window.removeEventListener("pointerdown", unlock);
     };
-  }, [pick]);
+  }, [pick, setAsk]);
 
   const hold = (key: string) => ({
     onPointerDown: (e: React.PointerEvent) => {
@@ -1106,7 +1135,7 @@ function ArenaGame() {
         <canvas ref={canvasRef} className="arena-canvas" aria-label="Live car combat arena" />
         <div className="crt" aria-hidden="true" />
 
-        {mode !== "playing" && (
+        {mode !== "playing" && mode !== "race" && (
           <header className="top-bar">
             <div className="logo" aria-label="Last Car Standing">
               <span className="logo-a">LAST CAR</span>
@@ -1198,7 +1227,7 @@ function ArenaGame() {
                 <button
                   type="button"
                   className="arcade-btn start-btn"
-                  onClick={() => startRef.current()}
+                  onClick={() => askRef.current()}
                 >
                   <Play size={18} /> START <small>ENTER</small>
                 </button>
@@ -1253,6 +1282,49 @@ function ArenaGame() {
               </div>
             </section>
           </div>
+        )}
+
+        {mode === "select" && picking && (
+          <div className="overlay" onClick={() => setAsk(false)}>
+            <div className="win overlay-box mode-pick" onClick={(e) => e.stopPropagation()}>
+              <div className="win-title">
+                <span>SELECT MODE</span>
+              </div>
+              <div className="win-body center">
+                <button
+                  type="button"
+                  className="arcade-btn start-btn"
+                  onClick={() => {
+                    setAsk(false);
+                    startRef.current();
+                  }}
+                >
+                  <Swords size={18} /> FFA <small>COMBAT · LAST CAR STANDING · F</small>
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn start-btn speed-btn"
+                  onClick={() => raceRef.current()}
+                >
+                  <Gauge size={18} /> SPEED <small>RACE · DODGE · FIRE SPEED · S</small>
+                </button>
+                <button type="button" className="arcade-btn alt-btn" onClick={() => setAsk(false)}>
+                  BACK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "race" && (
+          <RaceMode
+            carIndex={selected}
+            keys={keysRef}
+            sfx={sfxRef.current}
+            muted={muted}
+            onToggleMute={toggleMute}
+            onExit={() => setModeSync("select")}
+          />
         )}
 
         {mode === "playing" && (
