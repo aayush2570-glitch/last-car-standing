@@ -1,5 +1,39 @@
 import { PAL, carAt, cars, drawFallbackCar, getSprites, spriteReady } from "./cars";
 import { Fx, type Sfx } from "./fx";
+import crateImg from "@/assets/race/crates.webp";
+import drumImg from "@/assets/race/drum.webp";
+import jerseyImg from "@/assets/race/jersey.webp";
+import laserImg from "@/assets/race/laser.webp";
+import nitroImg from "@/assets/race/nitro.webp";
+import oilImg from "@/assets/race/oil.webp";
+import sawhorseImg from "@/assets/race/sawhorse.webp";
+import tiresImg from "@/assets/race/tires.webp";
+import truckImg from "@/assets/race/truck.webp";
+
+const PROP_URLS = {
+  crates: crateImg,
+  drum: drumImg,
+  jersey: jerseyImg,
+  laser: laserImg,
+  nitro: nitroImg,
+  oil: oilImg,
+  sawhorse: sawhorseImg,
+  tires: tiresImg,
+  truck: truckImg,
+};
+type PropName = keyof typeof PROP_URLS;
+let propCache: Record<PropName, HTMLImageElement> | null = null;
+/** Obstacle / pickup artwork (transparent webp, already oriented: truck faces up the road). */
+function getProps() {
+  if (propCache) return propCache;
+  const o = {} as Record<PropName, HTMLImageElement>;
+  for (const k of Object.keys(PROP_URLS) as PropName[]) {
+    const img = new Image();
+    img.src = PROP_URLS[k];
+    o[k] = img;
+  }
+  return (propCache = o);
+}
 
 /**
  * SPEED mode: top-down race through four zones (neon city, sunset canyon, frozen highway, lava inferno).
@@ -161,7 +195,8 @@ export function zoneAt(y: number): Zone {
 
 /* ───────────────────────────── simulation ───────────────────────────── */
 
-export type Kind = "drum" | "barrier" | "cannon" | "cone" | "oil" | "mine" | "tdrum" | "truck";
+export type Kind =
+  "drum" | "barrier" | "cannon" | "cone" | "oil" | "mine" | "tdrum" | "truck" | "crates";
 export type Obs = {
   kind: Kind;
   x: number;
@@ -241,15 +276,25 @@ export type RaceResult = {
   total: number;
 };
 
-const SOLID: Kind[] = ["drum", "barrier", "tdrum", "mine", "truck"];
-// obstacle mix per zone: drum, barrier, cannon, cone, oil, mine, tdrum, truck
+const SOLID: Kind[] = ["drum", "barrier", "tdrum", "mine", "truck", "crates"];
+// obstacle mix per zone: drum, barrier, cannon(laser), cone, oil, mine, tdrum, truck, crates
 const MIX = [
-  [30, 22, 16, 32, 0, 0, 0, 0],
-  [16, 14, 10, 14, 14, 8, 8, 16],
-  [12, 12, 16, 8, 28, 6, 4, 14],
-  [8, 8, 6, 6, 10, 22, 18, 22],
+  [30, 22, 16, 32, 0, 0, 0, 0, 14],
+  [16, 14, 10, 14, 14, 8, 8, 16, 14],
+  [12, 12, 16, 8, 28, 6, 4, 14, 6],
+  [8, 8, 6, 6, 10, 22, 18, 22, 4],
 ];
-const KINDS: Kind[] = ["drum", "barrier", "cannon", "cone", "oil", "mine", "tdrum", "truck"];
+const KINDS: Kind[] = [
+  "drum",
+  "barrier",
+  "cannon",
+  "cone",
+  "oil",
+  "mine",
+  "tdrum",
+  "truck",
+  "crates",
+];
 
 export class Race {
   cars: Racer[] = [];
@@ -358,6 +403,10 @@ export class Race {
         const n = 1 + Math.floor(Math.random() * 3);
         for (let j = 0; j < n; j++)
           add("mine", rx + rnd(-HALF + 50, HALF - 50), y + rnd(-60, 60), 16, 16);
+      } else if (kind === "crates") {
+        const n = 1 + (Math.random() < 0.4 ? 1 : 0);
+        const base = rnd(-HALF + 60, HALF - 60 - n * 90);
+        for (let j = 0; j < n; j++) add("crates", rx + base + j * 92, y + rnd(-10, 10), 40, 34);
       } else if (kind === "tdrum") {
         const base = rnd(-HALF + 60, HALF - 100);
         add("tdrum", rx + base, y, 18, 18);
@@ -581,7 +630,7 @@ export class Race {
     if (k === "barrier") {
       o.hit = true;
       c.vx = (c.x >= o.x ? 1 : -1) * 280;
-    } else if (k === "drum" || k === "tdrum") {
+    } else if (k === "drum" || k === "tdrum" || k === "crates") {
       o.gone = 1.1;
       o.vx = (o.x - c.x) * 4 + rnd(-90, 90);
       o.vy = -c.v * 1.5 - 100;
@@ -762,6 +811,7 @@ export class RaceView {
   fx = new Fx();
   result: RaceResult | null = null;
   private sprites = getSprites();
+  private props = getProps();
   private camX: number;
   private zoom = 1;
   private heat = 0;
@@ -902,12 +952,14 @@ export class RaceView {
         }
         const col =
           k === "cannon"
-            ? "#9be8ff"
+            ? "#ff4bd8"
             : k === "barrier"
               ? PAL.yellow
               : k === "truck" || k === "tdrum"
                 ? "#ff5a3d"
-                : "#ff7a3d";
+                : k === "crates"
+                  ? "#c08a4a"
+                  : "#ff7a3d";
         fx.impact(c.x, c.y - 30, 0, col, 16);
         fx.emit({
           kind: "ring",
@@ -948,12 +1000,12 @@ export class RaceView {
           fx.shake = e.fire ? 22 : 15;
           this.combo = 0;
           sfx.crash(true);
-          if (k === "cannon") sfx.splash();
+          if (k === "cannon") sfx.beep(1500, 0.2, 0.05);
           this.pop(
             e.fire
               ? "NITRO LOST!"
               : k === "cannon"
-                ? "SOAKED!"
+                ? "ZAPPED!"
                 : k === "truck"
                   ? "T-BONED!"
                   : "SLOWED!",
@@ -1058,7 +1110,7 @@ export class RaceView {
         const o = e.o,
           jx = roadX(o.y) + o.side * (HALF - 200);
         this.puddles.push({ x: jx, y: o.y, w: o.hw, l: 4 });
-        if (Math.abs(o.y - me.y) < 800) sfx.splash();
+        if (Math.abs(o.y - me.y) < 800) sfx.beep(1900, 0.25, 0.04);
       } else if (e.t === "finish" && e.c === me) {
         sfx.fanfare();
         this.say("FINISH!", PAL.yellow, 2);
@@ -1170,7 +1222,7 @@ export class RaceView {
             life: 0.5,
             size: 6,
             grow: 22,
-            color: "#9be8ff",
+            color: "#ff9af0",
             drag: 2.5,
           });
     }
@@ -1188,7 +1240,7 @@ export class RaceView {
             life: 0.35,
             size: 8,
             grow: 22,
-            color: "#bff3ff",
+            color: "#ff9af0",
             drag: 2,
           });
       } else if (o.kind === "truck" && R.clock > 0 && Math.random() < 0.3)
@@ -1239,6 +1291,76 @@ export class RaceView {
   }
 
   private flashCol = "#ff2b4d";
+
+  private propFor(o: Obs): HTMLImageElement | undefined {
+    const P = this.props;
+    switch (o.kind) {
+      case "drum":
+        return P.drum;
+      case "oil":
+        return P.oil;
+      case "truck":
+        return P.truck;
+      case "crates":
+        return P.crates;
+      case "barrier":
+        return [P.jersey, P.sawhorse, P.tires][Math.floor((o.t0 / PERIOD) * 3)];
+      default:
+        return undefined;
+    }
+  }
+
+  /** Draw an obstacle with its artwork. Drums and crates tumble away when hit. */
+  private drawProp(ctx: CanvasRenderingContext2D, o: Obs, img: HTMLImageElement) {
+    const k = o.kind,
+      asp = img.naturalWidth / img.naturalHeight;
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    if (k === "drum" || k === "crates") {
+      const fl = o.gone > 0 ? 1 + 0.5 * Math.sin((1 - o.gone / 1.1) * Math.PI) : 1;
+      ctx.scale(fl, fl);
+      ctx.rotate(o.rot);
+      ctx.globalAlpha = o.gone > 0 ? clamp(o.gone * 2, 0, 1) : 1;
+    }
+    let w = o.hw * 2,
+      h = w / asp;
+    if (k === "drum") {
+      w = o.hw * 2.5;
+      h = w / asp;
+    } else if (k === "truck") {
+      h = o.hh * 2;
+      w = h * asp;
+    } else if (k === "oil") {
+      w = o.hw * 2.2;
+      h = w / asp;
+    } else if (k === "crates") {
+      w = o.hw * 2.2;
+      h = w / asp;
+    } else if (k === "barrier") {
+      // tile narrow artwork (sawhorse, tyres) across the barrier's width
+      const n = Math.max(1, Math.round(w / (70 * asp)));
+      const cw = w / n,
+        ch = cw / asp;
+      ctx.fillStyle = "#000000";
+      ctx.globalAlpha = 0.3;
+      ctx.fillRect(-o.hw + 6, -ch * 0.3 + 10, w, ch * 0.6);
+      ctx.globalAlpha = 1;
+      for (let i = 0; i < n; i++) ctx.drawImage(img, -o.hw + i * cw, -ch / 2, cw, ch);
+      ctx.restore();
+      return;
+    }
+    if (k !== "oil") {
+      ctx.fillStyle = "#000000";
+      ctx.globalAlpha *= 0.3;
+      ctx.beginPath();
+      ctx.ellipse(6, 8, w * 0.5, h * 0.42, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha =
+        k === "drum" || k === "crates" ? (o.gone > 0 ? clamp(o.gone * 2, 0, 1) : 1) : 1;
+    }
+    ctx.drawImage(img, -w / 2, -h / 2, w, h);
+    ctx.restore();
+  }
 
   draw(ctx: CanvasRenderingContext2D, W: number, H: number, now: number) {
     const R = this.race,
@@ -1580,7 +1702,7 @@ export class RaceView {
 
     // puddles left by water cannons
     for (const p of this.puddles) {
-      ctx.fillStyle = "#4fb8ff";
+      ctx.fillStyle = "#ff4bd8";
       ctx.globalAlpha = 0.28 * Math.min(1, p.l);
       ctx.fillRect(p.x - p.w, p.y - 22, p.w * 2, 44);
       ctx.fillStyle = PAL.white;
@@ -1649,6 +1771,11 @@ export class RaceView {
     for (const o of R.obs) {
       if (o.gone < 0 || o.y < top - 100 || o.y > bot + 100) continue;
       const k = o.kind;
+      const pimg = this.propFor(o);
+      if (pimg && spriteReady(pimg)) {
+        this.drawProp(ctx, o, pimg);
+        continue;
+      }
       if (k === "drum" || k === "tdrum" || k === "cone") {
         ctx.save();
         ctx.translate(o.x, o.y);
@@ -1843,22 +1970,57 @@ export class RaceView {
           ctx.stroke();
           ctx.setLineDash([]);
         }
+        const mx = cx - o.side * 52; // muzzle x
         if (ph >= 2.5) {
-          ctx.fillStyle = "#6fd6ff";
-          ctx.globalAlpha = 0.55;
+          // laser beam: additive magenta glow, hot core, flicker
+          const fl = 0.8 + 0.2 * Math.sin(t * 90);
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = "#ff2bd6";
+          ctx.globalAlpha = 0.3 * fl;
+          ctx.fillRect(jx - o.hw, o.y - o.hh - 12, o.hw * 2, o.hh * 2 + 24);
+          ctx.fillStyle = "#ff4bd8";
+          ctx.globalAlpha = 0.75 * fl;
           ctx.fillRect(jx - o.hw, o.y - o.hh, o.hw * 2, o.hh * 2);
           ctx.fillStyle = PAL.white;
-          ctx.globalAlpha = 0.7;
-          for (let i = 0; i < 6; i++)
-            ctx.fillRect(jx - o.hw + ((t * 900 + i * 133) % (o.hw * 2)), o.y - 10 + i * 4, 40, 3);
+          ctx.globalAlpha = 0.95;
+          ctx.fillRect(jx - o.hw, o.y - 4, o.hw * 2, 8);
+          ctx.globalAlpha = 0.6;
+          for (let i = 0; i < 5; i++)
+            ctx.fillRect(jx - o.hw + ((t * 1400 + i * 97) % (o.hw * 2)), o.y - 12 + i * 5, 30, 2);
+          disc(ctx, mx, o.y, 26 * fl);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.globalAlpha = 1;
+        } else if (ph >= 1.6) {
+          // charging: muzzle glow grows
+          ctx.globalCompositeOperation = "lighter";
+          ctx.fillStyle = "#ff4bd8";
+          ctx.globalAlpha = 0.25 + 0.5 * (ph - 1.6);
+          disc(ctx, mx, o.y, 12 + (ph - 1.6) * 24);
+          ctx.globalCompositeOperation = "source-over";
           ctx.globalAlpha = 1;
         }
-        ctx.fillStyle = "#2b1a63";
-        ctx.fillRect(cx - 24, o.y - 26, 48, 52);
-        ctx.fillStyle = "#4da3ff";
-        ctx.fillRect(o.side < 0 ? cx + 8 : cx - 40, o.y - 8, 32, 16);
-        ctx.fillStyle = ph >= 1.6 && ph < 2.5 ? PAL.red : PAL.lime;
-        ctx.fillRect(cx - 6, o.y - 6, 12, 12);
+        // launcher body: sprite faces down, rotate so the muzzle points across the road
+        const lim = this.props.laser;
+        if (spriteReady(lim)) {
+          const len = 92,
+            wid = (len * lim.naturalWidth) / lim.naturalHeight;
+          ctx.save();
+          ctx.translate(cx - o.side * 6, o.y);
+          ctx.fillStyle = "#000000";
+          ctx.globalAlpha = 0.35;
+          ctx.beginPath();
+          ctx.ellipse(6, 8, len * 0.5, wid * 0.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+          ctx.rotate(o.side * (Math.PI / 2));
+          ctx.drawImage(lim, -wid / 2, -len / 2, wid, len);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = "#2b1a63";
+          ctx.fillRect(cx - 24, o.y - 26, 48, 52);
+          ctx.fillStyle = ph >= 1.6 && ph < 2.5 ? PAL.red : PAL.lime;
+          ctx.fillRect(cx - 6, o.y - 6, 12, 12);
+        }
       }
     }
 
@@ -1886,32 +2048,18 @@ export class RaceView {
       ctx.setLineDash([]);
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
-      ctx.fillStyle = PAL.shadow;
-      ctx.fillRect(-9, -15, 24, 38);
-      ctx.fillStyle = "#1d6fd8";
-      ctx.fillRect(-12, -19, 24, 38);
-      ctx.fillStyle = "#4dc8ff";
-      ctx.fillRect(-12, -19, 8, 38);
-      ctx.fillStyle = PAL.yellow;
-      ctx.fillRect(-8, -24, 16, 6);
-      ctx.strokeStyle = "#0b2a5e";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(-12, -19, 24, 38);
-      ctx.fillStyle = PAL.white;
-      poly(
-        ctx,
-        [
-          [3, -13],
-          [-7, 2],
-          [-1, 2],
-          [-4, 15],
-          [8, -2],
-          [2, -2],
-        ],
-        0,
-        0,
-      );
-      ctx.fill();
+      const nim = this.props.nitro;
+      if (spriteReady(nim)) {
+        const nh = 74,
+          nw = (nh * nim.naturalWidth) / nim.naturalHeight;
+        ctx.fillStyle = "#000000";
+        ctx.globalAlpha = 0.35;
+        ctx.beginPath();
+        ctx.ellipse(6, 30, nw * 0.45, 10, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.drawImage(nim, -nw / 2, -nh / 2 - 4 * pulse, nw, nh);
+      }
       ctx.restore();
     }
 
