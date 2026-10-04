@@ -68,6 +68,18 @@ type Vehicle = {
   react: number;
   strafeAng: number;
   trail: number;
+  /* runtime extras (all optional so every spawn site keeps working) */
+  px?: number;
+  py?: number;
+  vx?: number;
+  vy?: number;
+  foe?: Vehicle | null;
+  steerSide?: number;
+  stuckT?: number;
+  unstick?: number;
+  unstickAng?: number;
+  smoke?: number;
+  brake?: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -92,6 +104,8 @@ type Game = {
   trail: number;
   powerups: Powerup[];
   spawnT: number;
+  cam?: { x: number; y: number };
+  camT?: number;
 };
 type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
 type Show = {
@@ -131,7 +145,7 @@ const blocks: [number, number, number, number][] = [
 const TARGETS = 7;
 const CAR_RADIUS = 27;
 /** bots drive with the same physics as the player; this scales their top speed (1 = same as player) */
-const BOT_SPEED = 0.9;
+const BOT_SPEED = 0.95;
 const POWER_KINDS: PowerKind[] = ["health", "speed", "double"];
 const POWER_COLOR: Record<PowerKind, string> = {
   health: "#3dff7a",
@@ -141,6 +155,50 @@ const POWER_COLOR: Record<PowerKind, string> = {
 const POWER_LABEL: Record<PowerKind, string> = { health: "+", speed: "»", double: "II" };
 
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+/** wrap any angle into [-PI, PI) */
+const wrapAng = (a: number) => a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+/** segment vs rectangle (slab test) */
+function segHitsRect(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  rx: number,
+  ry: number,
+  rw: number,
+  rh: number,
+) {
+  let t0 = 0,
+    t1 = 1;
+  const dx = x2 - x1,
+    dy = y2 - y1;
+  const checks: [number, number][] = [
+    [-dx, x1 - rx],
+    [dx, rx + rw - x1],
+    [-dy, y1 - ry],
+    [dy, ry + rh - y1],
+  ];
+  for (const [pp, q] of checks) {
+    if (pp === 0) {
+      if (q < 0) return false;
+    } else {
+      const r = q / pp;
+      if (pp < 0) {
+        if (r > t1) return false;
+        if (r > t0) t0 = r;
+      } else {
+        if (r < t0) return false;
+        if (r < t1) t1 = r;
+      }
+    }
+  }
+  return true;
+}
+/** true if a straight line between two points is blocked by a crate / container */
+const lineBlocked = (x1: number, y1: number, x2: number, y2: number, pad = 0) =>
+  blocks.some(([x, y, w, h]) =>
+    segHitsRect(x1, y1, x2, y2, x - pad, y - pad, w + pad * 2, h + pad * 2),
+  );
 const shotInterval = (c: Car) => (1 - c.fireRate / 140) * 0.53 + 0.14;
 const rating = (c: Car) =>
   Math.round(((c.hp / 160) * 100 + c.speed + c.fireRate + c.damage + c.armor) / 5);
@@ -590,6 +648,24 @@ function ArenaGame() {
         keys = keysRef.current;
       const p = g.player,
         stats = carAt(p.carId);
+      // track every car's velocity (bots use it to lead their shots, the camera to look ahead)
+      for (const v of g.cars) {
+        if (v.px !== undefined && v.py !== undefined && dt > 0) {
+          v.vx = (v.vx ?? 0) * 0.65 + ((v.x - v.px) / dt) * 0.35;
+          v.vy = (v.vy ?? 0) * 0.65 + ((v.y - v.py) / dt) * 0.35;
+        }
+        v.px = v.x;
+        v.py = v.y;
+        // damaged cars trail smoke
+        const hpf = v.hp / carAt(v.carId).hp;
+        if (v.alive && hpf < 0.4) {
+          v.smoke = (v.smoke ?? 0) - dt;
+          if (v.smoke <= 0) {
+            v.smoke = hpf < 0.2 ? 0.05 : 0.12;
+            fx.puff(v.x - Math.sin(v.angle) * 14, v.y + Math.cos(v.angle) * 14);
+          }
+        }
+      }
       const canDrive = p.alive && !g.over;
       if (canDrive) {
         const forward =
@@ -632,31 +708,79 @@ function ArenaGame() {
           sfx.shot(0.8 + stats.fireRate / 200);
         }
       }
+      /* steering: probe ahead and slide around crates / walls */
+      const steer = (v: Vehicle, want: number) => {
+        const look = 150;
+        const free = (a: number) => {
+          const ex = v.x + Math.sin(a) * look,
+            ey = v.y - Math.cos(a) * look;
+          if (ex < 90 || ex > WORLD.width - 90 || ey < 90 || ey > WORLD.height - 90) return false;
+          return !lineBlocked(v.x, v.y, ex, ey, 20);
+        };
+        if (free(want)) return want;
+        const first = v.steerSide ?? 1;
+        for (const off of [0.45, 0.9, 1.4, 1.9, 2.5]) {
+          for (const sd of [first, -first]) {
+            if (free(want + off * sd)) {
+              v.steerSide = sd;
+              return want + off * sd;
+            }
+          }
+        }
+        return want + Math.PI;
+      };
+      const clearDir = (v: Vehicle, a: number, len = 110) =>
+        !lineBlocked(v.x, v.y, v.x + Math.sin(a) * len, v.y - Math.cos(a) * len, 28) &&
+        v.x + Math.sin(a) * len > 80 &&
+        v.x + Math.sin(a) * len < WORLD.width - 80 &&
+        v.y - Math.cos(a) * len > 80 &&
+        v.y - Math.cos(a) * len < WORLD.height - 80;
+
       for (const bot of g.cars) {
         if (!bot.bot || !bot.alive) continue;
         bot.cooldown -= dt;
+        const me = carAt(bot.carId);
+        const hpFrac = bot.hp / me.hp;
         const targets = g.cars.filter(
           (x) => x.alive && x !== bot && !(g.over && x === p && !p.alive),
         );
         if (!targets.length) continue;
-        let target: { x: number; y: number } = targets[0] as Vehicle;
-        for (const c of targets)
-          if (Math.hypot(c.x - bot.x, c.y - bot.y) < Math.hypot(target.x - bot.x, target.y - bot.y))
-            target = c;
-        // fighting comes first: bots only go for a power-up bubble when no enemy is near
+        // pick a foe: close + wounded + visible ones first, and stick with the current one a bit
+        let foe = targets[0] as Vehicle;
+        let best = Infinity;
+        for (const c of targets) {
+          const d = Math.hypot(c.x - bot.x, c.y - bot.y);
+          let score = d * (0.6 + 0.4 * (c.hp / carAt(c.carId).hp));
+          if (lineBlocked(bot.x, bot.y, c.x, c.y, 8)) score += 220;
+          if (c === bot.foe) score -= 120;
+          if (score < best) {
+            best = score;
+            foe = c;
+          }
+        }
+        bot.foe = foe;
+        const foeDist = Math.hypot(foe.x - bot.x, foe.y - bot.y);
+        // power-ups: hurt bots hunt health, healthy bots grab boosts when the coast is clear
         let pu: Powerup | null = null;
-        const enemyNear = Math.hypot(target.x - bot.x, target.y - bot.y) < 650;
-        if (!enemyNear)
-          for (const q of g.powerups)
-            if (
-              !pu ||
-              Math.hypot(q.x - bot.x, q.y - bot.y) < Math.hypot(pu.x - bot.x, pu.y - bot.y)
-            )
-              pu = q;
-        if (pu) target = pu;
-        const distance = Math.hypot(target.x - bot.x, target.y - bot.y);
-        const desired = Math.atan2(target.x - bot.x, -(target.y - bot.y));
-        const aimDelta = ((desired - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        let puD = Infinity;
+        for (const q of g.powerups) {
+          const d = Math.hypot(q.x - bot.x, q.y - bot.y);
+          let reach = 0;
+          if (q.kind === "health") reach = hpFrac < 0.45 ? 1200 : hpFrac < 0.8 ? 450 : 0;
+          else reach = foeDist > 650 ? 900 : foeDist > 300 ? 380 : 0;
+          if (d < reach && d < puD && q.life > d / 200) {
+            pu = q;
+            puD = d;
+          }
+        }
+        // lead the shot: aim where the target will be when the bullet arrives
+        const leadT = Math.min(1.1, foeDist / 400);
+        const aimX = foe.x + (foe.vx ?? 0) * leadT * 0.9,
+          aimY = foe.y + (foe.vy ?? 0) * leadT * 0.9;
+        const aimAng = Math.atan2(aimX - bot.x, -(aimY - bot.y));
+        const distance = pu ? puD : foeDist;
+        const desired = pu ? Math.atan2(pu.x - bot.x, -(pu.y - bot.y)) : aimAng;
+        const flee = hpFrac < 0.25 && foe.hp > bot.hp && !pu && foeDist < 520;
         // dodge: spot incoming enemy bullets on a collision course and sidestep across their path
         bot.dodgeT -= dt;
         bot.react -= dt;
@@ -668,44 +792,53 @@ function ArenaGame() {
               ry = bot.y - b.y;
             const sp2 = b.vx * b.vx + b.vy * b.vy;
             const tc = (rx * b.vx + ry * b.vy) / sp2; // time to closest approach
-            if (tc <= 0 || tc > 0.85 || tc >= urgent) continue;
+            if (tc <= 0 || tc > 0.9 || tc >= urgent) continue;
             const cx = rx - b.vx * tc,
               cy = ry - b.vy * tc;
-            if (Math.hypot(cx, cy) > 46) continue;
+            if (Math.hypot(cx, cy) > 48) continue;
             urgent = tc;
-            // sidestep to the side the bot is already offset toward (perpendicular to the shot)
             const side = b.vx * ry - b.vy * rx >= 0 ? 1 : -1;
+            const shotAng = Math.atan2(b.vx, -b.vy);
+            const snap = (sd: number) =>
+              Math.round((shotAng + (sd * Math.PI) / 2) / (Math.PI / 2)) * (Math.PI / 2);
+            // sidestep to whichever side is actually open (not into a crate or wall)
+            let ang = snap(side);
+            if (!clearDir(bot, ang) && clearDir(bot, snap(-side))) ang = snap(-side);
             bot.dodgeDir = side;
-            // snap the sidestep to up / down / left / right, like WASD on the player
-            const px = Math.cos(Math.atan2(b.vx, -b.vy)) * side,
-              py = Math.sin(Math.atan2(b.vx, -b.vy)) * side;
-            bot.dodgeAng = Math.round(Math.atan2(px, -py) / (Math.PI / 2)) * (Math.PI / 2);
+            bot.dodgeAng = ang;
           }
           if (urgent < 99) {
-            // not perfect: ~20% of the time a bot reacts too late
-            if (Math.random() < 0.8) bot.dodgeT = 0.5;
-            else bot.react = 0.4;
+            // not perfect: ~12% of the time a bot reacts too late
+            if (Math.random() < 0.88) bot.dodgeT = 0.5;
+            else bot.react = 0.35;
           }
         }
-        // strafe burst timer: now and then the bot taps a straight up/down/left/right key
+        // strafe bursts: circle the enemy, favouring the open side
         bot.drift -= dt;
         if (bot.drift <= 0) {
-          bot.drift = 1.6 + Math.random() * 2.6;
+          bot.drift = (hpFrac < 0.5 ? 0.9 : 1.3) + Math.random() * 2;
           bot.strafe = 0.7 + Math.random() * 0.5;
-          const sideAng = desired + (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 2);
-          bot.strafeAng = Math.round(sideAng / (Math.PI / 2)) * (Math.PI / 2);
+          const dirSign = Math.random() < 0.5 ? -1 : 1;
+          const snapA = (sd: number) =>
+            Math.round((aimAng + (sd * Math.PI) / 2) / (Math.PI / 2)) * (Math.PI / 2);
+          bot.strafeAng = clearDir(bot, snapA(dirSign)) ? snapA(dirSign) : snapA(-dirSign);
         }
         bot.strafe = Math.max(0, bot.strafe - dt);
+        bot.unstick = (bot.unstick ?? 0) - dt;
         // pick the "key" the bot presses: it then turns and drives forward exactly like the player
         let heading = desired;
         let speedMul = 1;
-        if (bot.dodgeT > 0) heading = bot.dodgeAng;
-        else if (!pu && bot.strafe > 0 && distance < 520) heading = bot.strafeAng;
-        else if (!pu && distance < 330) speedMul = 0.3; // close in: tap forward while lining up the shot
-        const turn = ((heading - bot.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        bot.angle += turn * Math.min(1, dt * 4.2);
-        const bSpeed =
-          carAt(bot.carId).speed * 2.15 * BOT_SPEED * speedMul * (bot.speedT > 0 ? 1.6 : 1);
+        if ((bot.unstick ?? 0) > 0) heading = bot.unstickAng ?? desired;
+        else if (bot.dodgeT > 0) heading = bot.dodgeAng;
+        else if (flee) heading = steer(bot, aimAng + Math.PI + (bot.steerSide ?? 1) * 0.5);
+        else if (!pu && bot.strafe > 0 && foeDist < 560) heading = steer(bot, bot.strafeAng);
+        else {
+          heading = steer(bot, desired);
+          if (!pu && foeDist < 300) speedMul = 0.3; // close in: tap forward while lining up the shot
+        }
+        const turn = wrapAng(heading - bot.angle);
+        bot.angle += turn * Math.min(1, dt * 4.4);
+        const bSpeed = me.speed * 2.15 * BOT_SPEED * speedMul * (bot.speedT > 0 ? 1.6 : 1);
         bot.x += Math.sin(bot.angle) * bSpeed * dt;
         bot.y -= Math.cos(bot.angle) * bSpeed * dt;
         bot.trail -= dt;
@@ -714,11 +847,29 @@ function ArenaGame() {
           fx.dust(bot.x - Math.sin(bot.angle) * 32, bot.y + Math.cos(bot.angle) * 32);
         }
         collide(bot);
-        if (!pu && distance < 560 && bot.cooldown <= 0 && Math.abs(aimDelta) < 0.22) {
+        // anti-stuck: if the bot is pushing but not moving, back out sideways for a moment
+        const moved = Math.hypot(bot.x - (bot.px ?? bot.x), bot.y - (bot.py ?? bot.y));
+        if (moved < bSpeed * dt * 0.3 && speedMul > 0.5) bot.stuckT = (bot.stuckT ?? 0) + dt;
+        else bot.stuckT = Math.max(0, (bot.stuckT ?? 0) - dt * 2);
+        if ((bot.stuckT ?? 0) > 0.6) {
+          bot.stuckT = 0;
+          bot.unstick = 0.7;
+          bot.unstickAng = heading + (Math.random() < 0.5 ? -1 : 1) * (Math.PI / 2 + Math.random());
+        }
+        // fire: needs line of sight, a lined-up barrel and a target in range
+        const los = !lineBlocked(bot.x, bot.y, foe.x, foe.y, 6);
+        const tol = 0.1 + Math.max(0, 1 - foeDist / 500) * 0.12;
+        if (
+          los &&
+          !flee &&
+          foeDist < 640 &&
+          bot.cooldown <= 0 &&
+          Math.abs(wrapAng(aimAng - bot.angle)) < tol
+        ) {
           // like the player, bots fire in the direction the car is facing
-          const aim = bot.angle + (Math.random() - 0.5) * 0.08;
-          const mx = bot.x + Math.sin(aim) * (carAt(bot.carId).h * 0.57),
-            my = bot.y - Math.cos(aim) * (carAt(bot.carId).h * 0.57);
+          const aim = bot.angle + (Math.random() - 0.5) * 0.05;
+          const mx = bot.x + Math.sin(aim) * (me.h * 0.57),
+            my = bot.y - Math.cos(aim) * (me.h * 0.57);
           for (const off of bot.dblT > 0 ? [-9, 9] : [0]) {
             g.bullets.push({
               x: mx + Math.cos(aim) * off,
@@ -730,7 +881,7 @@ function ArenaGame() {
               damage: 5.3,
             });
           }
-          bot.cooldown = 0.52 + Math.random() * 0.58;
+          bot.cooldown = Math.max(0.42, shotInterval(me) * 1.6) + Math.random() * 0.4;
           fx.muzzle(mx, my, aim, PAL.hostile);
         }
       }
@@ -897,8 +1048,21 @@ function ArenaGame() {
         fx = fxRef.current;
       const p = g?.player;
       const zoom = Math.min(width / 820, height / 560, 1);
-      const cx = p ? p.x : WORLD.width / 2,
+      let cx = p ? p.x : WORLD.width / 2,
         cy = p ? p.y : WORLD.height / 2;
+      if (g && p) {
+        // smooth camera that looks a little ahead of where the player is driving
+        const dtc = Math.min(0.05, Math.max(0, t - (g.camT ?? t)));
+        g.camT = t;
+        const tx = p.x + (p.vx ?? 0) * 0.22,
+          ty = p.y + (p.vy ?? 0) * 0.22;
+        if (!g.cam) g.cam = { x: p.x, y: p.y };
+        const k = 1 - Math.exp(-dtc * 9);
+        g.cam.x += (tx - g.cam.x) * k;
+        g.cam.y += (ty - g.cam.y) * k;
+        cx = g.cam.x;
+        cy = g.cam.y;
+      }
       const [sx, sy] = fx.offset();
       const ox = width / 2 - cx * zoom + sx,
         oy = height / 2 - cy * zoom + sy;
@@ -915,15 +1079,32 @@ function ArenaGame() {
       if (g) {
         for (const q of g.powerups) {
           const col = POWER_COLOR[q.kind];
-          const bob = 1 + 0.12 * Math.sin(t * 5 + q.x);
+          const bob = 1 + 0.1 * Math.sin(t * 5 + q.x);
           const blink = q.life < 5 && Math.floor(t * 6) % 2 === 0 ? 0.35 : 1;
           ctx.globalAlpha = blink;
-          ctx.fillStyle = hexA(col, 0.22);
+          // soft ground glow
+          ctx.globalCompositeOperation = "lighter";
+          const glow = ctx.createRadialGradient(q.x, q.y, 4, q.x, q.y, 70 * bob);
+          glow.addColorStop(0, hexA(col, 0.5));
+          glow.addColorStop(1, hexA(col, 0));
+          ctx.fillStyle = glow;
+          ctx.fillRect(q.x - 75, q.y - 75, 150, 150);
+          ctx.globalCompositeOperation = "source-over";
+          // spinning dashed ring + bubble
+          ctx.fillStyle = hexA(col, 0.2);
           ctx.beginPath();
-          ctx.arc(q.x, q.y, 30 * bob, 0, Math.PI * 2);
+          ctx.arc(q.x, q.y, 28 * bob, 0, Math.PI * 2);
           ctx.fill();
           ctx.strokeStyle = col;
           ctx.lineWidth = 3;
+          ctx.setLineDash([14, 10]);
+          ctx.lineDashOffset = -t * 40;
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 32 * bob, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, 22 * bob, 0, Math.PI * 2);
           ctx.stroke();
           ctx.fillStyle = col;
           ctx.font = '14px "Press Start 2P", monospace';
@@ -936,9 +1117,64 @@ function ArenaGame() {
           if (!v.alive) continue;
           const car = carAt(v.carId);
           const img = sprites[v.carId];
+          const nearCam = Math.hypot(v.x - cx, v.y - cy) < 1100;
+          if (nearCam) {
+            // soft drop shadow, offset away from the "light"
+            ctx.save();
+            ctx.translate(v.x + 10, v.y + 14);
+            ctx.rotate(v.angle);
+            ctx.fillStyle = "rgba(0,0,0,0.18)";
+            ctx.beginPath();
+            ctx.ellipse(0, 0, car.w * 0.62, car.h * 0.58, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "rgba(0,0,0,0.22)";
+            ctx.beginPath();
+            ctx.ellipse(0, 0, car.w * 0.5, car.h * 0.48, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
           ctx.save();
           ctx.translate(v.x, v.y);
           ctx.rotate(v.angle);
+          if (nearCam) {
+            // headlight cone
+            ctx.globalCompositeOperation = "lighter";
+            const fy = -car.h * 0.42;
+            const hl = ctx.createLinearGradient(0, fy, 0, fy - 210);
+            hl.addColorStop(0, "rgba(255,246,205,0.26)");
+            hl.addColorStop(1, "rgba(255,246,205,0)");
+            ctx.fillStyle = hl;
+            ctx.beginPath();
+            ctx.moveTo(-car.w * 0.3, fy);
+            ctx.lineTo(car.w * 0.3, fy);
+            ctx.lineTo(car.w * 0.3 + 75, fy - 210);
+            ctx.lineTo(-car.w * 0.3 - 75, fy - 210);
+            ctx.closePath();
+            ctx.fill();
+            // tail lights
+            ctx.fillStyle = "rgba(255,40,40,0.5)";
+            for (const sx2 of [-1, 1]) {
+              ctx.beginPath();
+              ctx.arc(sx2 * car.w * 0.3, car.h * 0.46, 5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+            // boost flame
+            if (v.speedT > 0) {
+              const fl = 22 + Math.random() * 16;
+              const fg = ctx.createLinearGradient(0, car.h * 0.48, 0, car.h * 0.48 + fl);
+              fg.addColorStop(0, "rgba(120,240,255,0.9)");
+              fg.addColorStop(0.5, "rgba(255,170,60,0.55)");
+              fg.addColorStop(1, "rgba(255,80,20,0)");
+              ctx.fillStyle = fg;
+              ctx.beginPath();
+              ctx.moveTo(-9, car.h * 0.48);
+              ctx.lineTo(9, car.h * 0.48);
+              ctx.lineTo(0, car.h * 0.48 + fl);
+              ctx.closePath();
+              ctx.fill();
+            }
+            ctx.globalCompositeOperation = "source-over";
+          }
           // One simple circle under every car: blue = you, red = everyone else.
           const r = Math.max(car.w, car.h) * 0.62;
           const rgb = v === p ? "56,160,255" : "255,64,64";
@@ -966,14 +1202,17 @@ function ArenaGame() {
             ctx.stroke();
           }
           ctx.restore();
-          if (v === p || v.hp < car.hp * 0.63) {
+          if (v === p || v.hp < car.hp * 0.85) {
             const pct = Math.max(0, v.hp / car.hp);
             ctx.fillStyle = "#000";
-            ctx.fillRect(v.x - 25, v.y - 49, 50, 8);
+            ctx.fillRect(v.x - 26, v.y - 50, 52, 9);
             ctx.fillStyle = "#2a1a63";
-            ctx.fillRect(v.x - 23, v.y - 47, 46, 4);
-            ctx.fillStyle = v === p ? PAL.lime : PAL.red;
-            ctx.fillRect(v.x - 23, v.y - 47, 46 * pct, 4);
+            ctx.fillRect(v.x - 24, v.y - 48, 48, 5);
+            ctx.fillStyle =
+              v === p ? PAL.lime : pct > 0.6 ? "#7dff5a" : pct > 0.3 ? "#ffc83d" : PAL.red;
+            ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 5);
+            ctx.fillStyle = "rgba(255,255,255,0.35)";
+            ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 2);
           }
           if (v === p) {
             // yellow "YOU" tag above the player's car
@@ -1007,7 +1246,42 @@ function ArenaGame() {
       ctx.lineWidth = 2;
       ctx.strokeRect(9, 9, WORLD.width - 18, WORLD.height - 18);
       ctx.globalAlpha = 1;
+      ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 0.12 + 0.08 * pulse;
+      ctx.strokeStyle = PAL.cyan;
+      ctx.lineWidth = 26;
+      ctx.strokeRect(4, 4, WORLD.width - 8, WORLD.height - 8);
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
       ctx.restore();
+      // screen-space vignette for depth, plus a red heartbeat when the player is nearly dead
+      const vg = ctx.createRadialGradient(
+        width / 2,
+        height / 2,
+        Math.min(width, height) * 0.38,
+        width / 2,
+        height / 2,
+        Math.max(width, height) * 0.78,
+      );
+      vg.addColorStop(0, "rgba(0,0,10,0)");
+      vg.addColorStop(1, "rgba(4,0,18,0.55)");
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, width, height);
+      if (p && p.alive && p.hp / carAt(p.carId).hp < 0.3) {
+        const beat = 0.18 + 0.14 * Math.sin(t * 7);
+        const rg = ctx.createRadialGradient(
+          width / 2,
+          height / 2,
+          Math.min(width, height) * 0.3,
+          width / 2,
+          height / 2,
+          Math.max(width, height) * 0.7,
+        );
+        rg.addColorStop(0, "rgba(255,0,40,0)");
+        rg.addColorStop(1, `rgba(255,0,40,${beat})`);
+        ctx.fillStyle = rg;
+        ctx.fillRect(0, 0, width, height);
+      }
     };
 
     const draw = (now: number) => {
@@ -1567,14 +1841,18 @@ function drawBox(
   i: number,
 ) {
   const lip = 9; // fake height: darker front face under the lid
-  ctx.fillStyle = "rgba(0,0,0,0.38)";
-  ctx.fillRect(x + 12, y + 14, w, h);
+  ctx.fillStyle = "rgba(0,0,0,0.16)";
+  ctx.fillRect(x + 6, y + 8, w + 14, h + 14);
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.fillRect(x + 10, y + 12, w, h);
   if (w <= 110 && h <= 110) {
     // wooden crate
     ctx.fillStyle = "#6b4823";
     ctx.fillRect(x, y, w, h);
     ctx.fillStyle = "#b07d45";
     ctx.fillRect(x, y, w, h - lip);
+    ctx.fillStyle = "rgba(255,235,190,0.25)";
+    ctx.fillRect(x, y, w, 2);
     ctx.strokeStyle = "rgba(60,35,10,0.35)";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -1609,6 +1887,11 @@ function drawBox(
   ctx.fillStyle = shade(col, -0.45);
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = col;
+  ctx.fillRect(x, y, w, h - lip);
+  const sheen = ctx.createLinearGradient(x, y, x + w, y + h);
+  sheen.addColorStop(0, "rgba(255,255,255,0.14)");
+  sheen.addColorStop(1, "rgba(0,0,0,0.12)");
+  ctx.fillStyle = sheen;
   ctx.fillRect(x, y, w, h - lip);
   // corrugation ribs run across the container's short side
   const th = h - lip;
@@ -1733,6 +2016,63 @@ function getFloor(): HTMLCanvasElement {
     f.stroke();
   }
   f.setLineDash([]);
+  // hazard-stripe border along the walls
+  const band = 22;
+  const bands: [number, number, number, number][] = [
+    [0, 0, c.width, band],
+    [0, c.height - band, c.width, band],
+    [0, 0, band, c.height],
+    [c.width - band, 0, band, c.height],
+  ];
+  for (const [bx, by, bw, bh] of bands) {
+    f.save();
+    f.beginPath();
+    f.rect(bx, by, bw, bh);
+    f.clip();
+    f.fillStyle = "rgba(20,20,24,0.85)";
+    f.fillRect(bx, by, bw, bh);
+    f.fillStyle = "rgba(240,200,50,0.8)";
+    const len = Math.max(bw, bh) + 60;
+    for (let k = -40; k < len; k += 44) {
+      f.beginPath();
+      if (bw > bh) {
+        f.moveTo(bx + k, by + bh);
+        f.lineTo(bx + k + 22, by + bh);
+        f.lineTo(bx + k + 22 + bh, by);
+        f.lineTo(bx + k + bh, by);
+      } else {
+        f.moveTo(bx, by + k);
+        f.lineTo(bx, by + k + 22);
+        f.lineTo(bx + bw, by + k + 22 - bw);
+        f.lineTo(bx + bw, by + k - bw);
+      }
+      f.closePath();
+      f.fill();
+    }
+    f.restore();
+  }
+  // painted centre ring (player spawn)
+  f.strokeStyle = "rgba(240,205,90,0.35)";
+  f.lineWidth = 6;
+  f.setLineDash([18, 14]);
+  f.beginPath();
+  f.arc(1200, 860, 120, 0, Math.PI * 2);
+  f.stroke();
+  f.setLineDash([]);
+  // overhead light pools (additive)
+  f.globalCompositeOperation = "lighter";
+  for (let ly = 330; ly < c.height; ly += 520) {
+    for (let lx = 300; lx < c.width; lx += 600) {
+      const jx = lx + (rnd() - 0.5) * 120,
+        jy = ly + (rnd() - 0.5) * 120;
+      const lg = f.createRadialGradient(jx, jy, 10, jx, jy, 340);
+      lg.addColorStop(0, "rgba(130,175,255,0.13)");
+      lg.addColorStop(1, "rgba(130,175,255,0)");
+      f.fillStyle = lg;
+      f.fillRect(jx - 340, jy - 340, 680, 680);
+    }
+  }
+  f.globalCompositeOperation = "source-over";
   // soft vignette toward the walls
   const vg = f.createRadialGradient(
     c.width / 2,

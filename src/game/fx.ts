@@ -330,6 +330,11 @@ export function drawTracer(
   ctx.moveTo(tx, ty);
   ctx.lineTo(x, y);
   ctx.stroke();
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  ctx.fill();
   ctx.globalAlpha = 0.9;
   ctx.lineWidth = 4;
   ctx.beginPath();
