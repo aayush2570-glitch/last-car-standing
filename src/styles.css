@@ -330,3 +330,25 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 .mode-pick .arcade-btn { width: 100%; }
 .mode-pick .speed-btn { background: #ff7a1a; border-color: #ffe23d; color: #1a0b3d; }
 .mode-pick small { display: block; margin-top: 4px; }
+
+/* ───────── TDM (6v6) ───────── */
+.hud-tdm { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: flex; align-items: center; gap: 0; pointer-events: none; z-index: 21; border: 3px solid #000; background: rgba(11, 6, 32, .88); box-shadow: 0 0 0 2px #3a2478; }
+.tdm-score { min-width: 64px; padding: 9px 12px; text-align: center; font: 22px/1 "Press Start 2P", monospace; color: #fff; text-shadow: 3px 3px 0 #000; }
+.tdm-blue { background: #1f6fd1; }
+.tdm-red { background: #d12a2a; }
+.tdm-time { padding: 9px 14px; font: 16px/1 "Press Start 2P", monospace; color: #ffe23d; text-shadow: 2px 2px 0 #000; min-width: 96px; text-align: center; }
+.map-base { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border: 2px solid #fff; border-radius: 50%; opacity: .9; }
+.respawn-banner { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); z-index: 22; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 16px 22px; background: rgba(11, 6, 32, .82); border: 3px solid #ff2bd6; pointer-events: none; text-align: center; }
+.respawn-banner span { font: 10px/1.4 "Press Start 2P", monospace; color: #fff; letter-spacing: .05em; }
+.respawn-banner b { font: 54px/1 "Press Start 2P", monospace; color: #ffe23d; text-shadow: 4px 4px 0 #ff2bd6, 7px 7px 0 #000; animation: respawn-pop .9s ease-out; }
+@keyframes respawn-pop { 0% { transform: scale(1.7); opacity: .2; } 35% { opacity: 1; } 100% { transform: scale(1); } }
+.mode-pick .tdm-btn { background: #8a2be2; border-color: #ffe23d; color: #fff; }
+.mode-pick .team-blue-btn { background: #1f6fd1; border-color: #9cd0ff; color: #fff; }
+.mode-pick .team-red-btn { background: #d12a2a; border-color: #ffb0b0; color: #fff; }
+@media (max-width: 640px) {
+  .tdm-score { min-width: 44px; font-size: 15px; padding: 7px 8px; }
+  .tdm-time { font-size: 11px; min-width: 66px; padding: 7px 8px; }
+  .respawn-banner b { font-size: 38px; }
+  .hud-tdm { top: 52px; }
+}
+@media (prefers-reduced-motion: reduce) { .respawn-banner b { animation: none; } }

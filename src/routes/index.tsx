@@ -80,6 +80,10 @@ type Vehicle = {
   unstickAng?: number;
   smoke?: number;
   brake?: number;
+  /* TDM */
+  team?: number; // 0 = blue, 1 = red
+  respawn?: number;
+  inv?: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -92,7 +96,9 @@ type Projectile = {
   life: number;
   damage: number;
 };
-type Dot = { x: number; y: number; me: boolean };
+type Dot = { x: number; y: number; me: boolean; team?: number | undefined };
+type Tdm = { score: [number, number]; time: number; limit: number; team: number; draw?: boolean };
+type TdmHud = { blue: number; red: number; left: number; respawn: number; team: number };
 type Game = {
   player: Vehicle;
   cars: Vehicle[];
@@ -106,6 +112,7 @@ type Game = {
   spawnT: number;
   cam?: { x: number; y: number };
   camT?: number;
+  tdm?: Tdm;
 };
 type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
 type Show = {
@@ -142,6 +149,47 @@ const blocks: [number, number, number, number][] = [
   [1100, 400, 75, 72],
   [580, 900, 80, 72],
 ];
+/* ───────────── TDM (6v6) world: the FFA map, extended sideways with a base circle at each end ───────────── */
+const FFA_WORLD = { width: WORLD.width, height: WORLD.height };
+const FFA_BLOCKS = blocks.map((b) => [...b] as [number, number, number, number]);
+const TDM_WORLD = { width: 3600, height: 1720 };
+const TDM_SHIFT = (TDM_WORLD.width - FFA_WORLD.width) / 2;
+const TDM_FLANK: [number, number, number, number][] = [
+  [700, 330, 120, 190],
+  [700, 1200, 120, 190],
+  [640, 760, 90, 200],
+  [1000, 40, 150, 90],
+  [1000, 1590, 150, 90],
+];
+const TDM_BLOCKS: [number, number, number, number][] = [
+  ...FFA_BLOCKS.map(([x, y, w, h]) => [x + TDM_SHIFT, y, w, h] as [number, number, number, number]),
+  ...TDM_FLANK,
+  ...TDM_FLANK.map(
+    ([x, y, w, h]) => [TDM_WORLD.width - x - w, y, w, h] as [number, number, number, number],
+  ),
+];
+const TDM_SPAWN = [
+  { x: 330, y: 860 },
+  { x: TDM_WORLD.width - 330, y: 860 },
+];
+const SPAWN_R = 190;
+const TDM_TIME = 600;
+const TDM_RESPAWN = 5;
+const TEAM_COL = ["#38a0ff", "#ff4040"];
+const TEAM_RGB = ["56,160,255", "255,64,64"];
+let worldKind: "ffa" | "tdm" = "ffa";
+function setWorld(kind: "ffa" | "tdm") {
+  if (kind === worldKind) return;
+  const w = kind === "tdm" ? TDM_WORLD : FFA_WORLD;
+  WORLD.width = w.width;
+  WORLD.height = w.height;
+  blocks.length = 0;
+  for (const b of kind === "tdm" ? TDM_BLOCKS : FFA_BLOCKS) blocks.push([...b]);
+  floorCanvas = null; // floor is rebuilt for the new map size
+  worldKind = kind;
+}
+const bulletCol = (tdm: boolean, o: Vehicle) =>
+  tdm ? (TEAM_COL[o.team === 1 ? 1 : 0] as string) : o.bot ? PAL.hostile : PAL.friendly;
 const TARGETS = 7;
 const CAR_RADIUS = 27;
 /** bots drive with the same physics as the player; this scales their top speed (1 = same as player) */
@@ -219,8 +267,14 @@ function ArenaGame() {
     kills: number;
     time: number;
     dots: Dot[];
+    tdm?: TdmHud | undefined;
   }>({ hp: 100, alive: TOTAL, kills: 0, time: 0, dots: [] });
-  const [result, setResult] = useState({ won: false, position: TOTAL, xp: 0 });
+  const [result, setResult] = useState<{
+    won: boolean;
+    position: number;
+    xp: number;
+    tdm?: { blue: number; red: number; team: number; draw: boolean } | undefined;
+  }>({ won: false, position: TOTAL, xp: 0 });
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
   const [broken, setBroken] = useState<Record<number, boolean>>({});
@@ -253,6 +307,9 @@ function ArenaGame() {
   const pickingRef = useRef(false);
   const askRef = useRef<() => void>(() => {});
   const raceRef = useRef<() => void>(() => {});
+  const startTdmRef = useRef<(team: number) => void>(() => {});
+  const [teamPick, setTeamPick] = useState(false);
+  const teamPickRef = useRef(false);
 
   const setModeSync = useCallback((m: "select" | "playing" | "result" | "race") => {
     modeRef.current = m;
@@ -261,6 +318,7 @@ function ArenaGame() {
   }, []);
 
   const startMatch = useCallback(() => {
+    setWorld("ffa");
     const idx = selectedRef.current;
     const playerCar = carAt(idx);
     const player: Vehicle = {
@@ -337,10 +395,87 @@ function ArenaGame() {
   }, [setModeSync]);
   startRef.current = startMatch;
 
+  /* TDM: 6v6, team = 0 (blue) or 1 (red); the player drives in slot 0 of their team */
+  const startTdm = useCallback(
+    (team: number) => {
+      setWorld("tdm");
+      const idx = selectedRef.current;
+      let k = 0;
+      const make = (tm: number, slot: number, isPlayer: boolean): Vehicle => {
+        const sp = TDM_SPAWN[tm] as { x: number; y: number };
+        const a = ((slot - 1) / 5) * Math.PI * 2;
+        const id = isPlayer ? idx : (k++ + idx + 1) % cars.length;
+        return {
+          x: sp.x + (slot ? Math.cos(a) * 105 : 0),
+          y: sp.y + (slot ? Math.sin(a) * 105 : 0),
+          angle: tm === 0 ? Math.PI / 2 : -Math.PI / 2,
+          hp: carAt(id).hp,
+          alive: true,
+          cooldown: isPlayer ? 0 : Math.random() * 1.8,
+          bot: !isPlayer,
+          drift: Math.random() * 5,
+          strafe: 0,
+          carId: id,
+          hit: 0,
+          speedT: 0,
+          dblT: 0,
+          dodgeT: 0,
+          dodgeDir: 1,
+          dodgeAng: 0,
+          react: 0,
+          strafeAng: 0,
+          trail: 0,
+          team: tm,
+          respawn: 0,
+          inv: 1.5,
+        };
+      };
+      const player = make(team, 0, true);
+      const list: Vehicle[] = [player];
+      for (let i = 1; i < 6; i++) list.push(make(team, i, false));
+      for (let i = 0; i < 6; i++) list.push(make(1 - team, i, false));
+      fxRef.current = new Fx();
+      gameRef.current = {
+        player,
+        cars: list,
+        bullets: [],
+        started: performance.now(),
+        lastHud: 0,
+        kills: 0,
+        over: null,
+        trail: 0,
+        powerups: [],
+        spawnT: 1.5,
+        tdm: { score: [0, 0], time: 0, limit: TDM_TIME, team },
+      };
+      keysRef.current.clear();
+      pausedRef.current = false;
+      setHud({
+        hp: carAt(idx).hp,
+        alive: TOTAL,
+        kills: 0,
+        time: 0,
+        dots: [],
+        tdm: { blue: 0, red: 0, left: TDM_TIME, respawn: 0, team },
+      });
+      setPaused(false);
+      setModeSync("playing");
+      sfxRef.current.blip();
+    },
+    [setModeSync],
+  );
+  startTdmRef.current = startTdm;
+
   /* START asks which mode to play: FFA (classic combat) or SPEED (race) */
   const setAsk = useCallback((v: boolean) => {
     pickingRef.current = v;
     setPicking(v);
+    teamPickRef.current = false;
+    setTeamPick(false);
+  }, []);
+  const openTeamPick = useCallback((v: boolean) => {
+    teamPickRef.current = v;
+    setTeamPick(v);
   }, []);
   askRef.current = () => {
     setAsk(true);
@@ -354,9 +489,14 @@ function ArenaGame() {
   };
 
   const finishMatch = useCallback(
-    (won: boolean, position: number) => {
-      const xp = won ? 750 : Math.max(80, (TOTAL - position) * 90 + 100);
-      setResult({ won, position, xp });
+    (won: boolean, position: number, tdm?: Tdm, kills = 0) => {
+      let xp = won ? 750 : Math.max(80, (TOTAL - position) * 90 + 100);
+      let res: { blue: number; red: number; team: number; draw: boolean } | undefined;
+      if (tdm) {
+        res = { blue: tdm.score[0], red: tdm.score[1], team: tdm.team, draw: !!tdm.draw };
+        xp = (tdm.draw ? 300 : won ? 750 : 200) + kills * 30;
+      }
+      setResult({ won, position, xp, tdm: res });
       setModeSync("result");
     },
     [setModeSync],
@@ -648,6 +788,60 @@ function ArenaGame() {
         keys = keysRef.current;
       const p = g.player,
         stats = carAt(p.carId);
+      const tdm = g.tdm;
+      /* TDM: match clock, team respawns (5-4-3-2-1 on your own base) and the final whistle */
+      if (tdm && !g.over) {
+        tdm.time += dt;
+        for (const v of g.cars) {
+          if (v.inv) v.inv = Math.max(0, v.inv - dt);
+          if (v.alive) continue;
+          v.respawn = (v.respawn ?? 0) - dt;
+          if (v.respawn > 0) continue;
+          const sp = TDM_SPAWN[v.team === 1 ? 1 : 0] as { x: number; y: number };
+          let x = sp.x,
+            y = sp.y;
+          for (let tries = 0; tries < 14; tries++) {
+            const a = Math.random() * Math.PI * 2,
+              r = Math.sqrt(Math.random()) * (SPAWN_R - 70);
+            x = sp.x + Math.cos(a) * r;
+            y = sp.y + Math.sin(a) * r;
+            if (
+              !g.cars.some(
+                (o) => o !== v && o.alive && Math.hypot(o.x - x, o.y - y) < CAR_RADIUS * 2.3,
+              )
+            )
+              break;
+          }
+          v.x = x;
+          v.y = y;
+          v.px = x;
+          v.py = y;
+          v.vx = 0;
+          v.vy = 0;
+          v.angle = v.team === 1 ? -Math.PI / 2 : Math.PI / 2;
+          v.hp = carAt(v.carId).hp;
+          v.alive = true;
+          v.cooldown = 0.5;
+          v.speedT = 0;
+          v.dblT = 0;
+          v.hit = 0;
+          v.foe = null;
+          v.stuckT = 0;
+          v.unstick = 0;
+          v.inv = 2;
+          fx.impact(x, y, 0, TEAM_COL[v.team === 1 ? 1 : 0] as string, 14);
+          if (v === p) {
+            g.cam = { x, y };
+            sfx.blip();
+          }
+        }
+        if (tdm.time >= tdm.limit) {
+          const mine = tdm.score[tdm.team] as number,
+            theirs = tdm.score[1 - tdm.team] as number;
+          tdm.draw = mine === theirs;
+          g.over = { won: mine > theirs, position: 1, t: 1.6 };
+        }
+      }
       // track every car's velocity (bots use it to lead their shots, the camera to look ahead)
       for (const v of g.cars) {
         if (v.px !== undefined && v.py !== undefined && dt > 0) {
@@ -741,8 +935,19 @@ function ArenaGame() {
         bot.cooldown -= dt;
         const me = carAt(bot.carId);
         const hpFrac = bot.hp / me.hp;
+        /* TDM rubber-band: the team that is behind plays a bit sharper, the leaders a bit sloppier,
+           so matches stay close instead of snowballing. aid > 0 = trailing, < 0 = leading */
+        let aid = 0;
+        if (tdm) {
+          const bt = bot.team === 1 ? 1 : 0;
+          aid = clamp(((tdm.score[1 - bt] as number) - (tdm.score[bt] as number)) / 8, -1, 1);
+        }
         const targets = g.cars.filter(
-          (x) => x.alive && x !== bot && !(g.over && x === p && !p.alive),
+          (x) =>
+            x.alive &&
+            x !== bot &&
+            !(g.over && x === p && !p.alive) &&
+            (!tdm || x.team !== bot.team),
         );
         if (!targets.length) continue;
         // pick a foe: close + wounded + visible ones first, and stick with the current one a bit
@@ -787,7 +992,7 @@ function ArenaGame() {
         if (bot.dodgeT <= 0 && bot.react <= 0) {
           let urgent = 99;
           for (const b of g.bullets) {
-            if (b.owner === bot || b.life <= 0) continue;
+            if (b.owner === bot || b.life <= 0 || (tdm && b.owner.team === bot.team)) continue;
             const rx = bot.x - b.x,
               ry = bot.y - b.y;
             const sp2 = b.vx * b.vx + b.vy * b.vy;
@@ -838,7 +1043,8 @@ function ArenaGame() {
         }
         const turn = wrapAng(heading - bot.angle);
         bot.angle += turn * Math.min(1, dt * 4.4);
-        const bSpeed = me.speed * 2.15 * BOT_SPEED * speedMul * (bot.speedT > 0 ? 1.6 : 1);
+        const bSpeed =
+          me.speed * 2.15 * BOT_SPEED * (1 + 0.08 * aid) * speedMul * (bot.speedT > 0 ? 1.6 : 1);
         bot.x += Math.sin(bot.angle) * bSpeed * dt;
         bot.y -= Math.cos(bot.angle) * bSpeed * dt;
         bot.trail -= dt;
@@ -867,7 +1073,7 @@ function ArenaGame() {
           Math.abs(wrapAng(aimAng - bot.angle)) < tol
         ) {
           // like the player, bots fire in the direction the car is facing
-          const aim = bot.angle + (Math.random() - 0.5) * 0.05;
+          const aim = bot.angle + (Math.random() - 0.5) * (0.05 + 0.1 * Math.max(0, -aid));
           const mx = bot.x + Math.sin(aim) * (me.h * 0.57),
             my = bot.y - Math.cos(aim) * (me.h * 0.57);
           for (const off of bot.dblT > 0 ? [-9, 9] : [0]) {
@@ -878,11 +1084,12 @@ function ArenaGame() {
               vy: -Math.cos(aim) * 400,
               owner: bot,
               life: 2.5,
-              damage: 5.3,
+              damage: 5.3 * (1 + 0.15 * aid),
             });
           }
-          bot.cooldown = Math.max(0.42, shotInterval(me) * 1.6) + Math.random() * 0.4;
-          fx.muzzle(mx, my, aim, PAL.hostile);
+          bot.cooldown =
+            (Math.max(0.42, shotInterval(me) * 1.6) + Math.random() * 0.4) * (1 - 0.22 * aid);
+          fx.muzzle(mx, my, aim, tdm ? bulletCol(true, bot) : PAL.hostile);
         }
       }
       // car-to-car collisions: solid bodies push each other apart
@@ -919,7 +1126,7 @@ function ArenaGame() {
       }
       // power-up bubbles: spawn, expire, pick up
       g.spawnT -= dt;
-      if (g.spawnT <= 0 && g.powerups.length < 4 && !g.over) {
+      if (g.spawnT <= 0 && g.powerups.length < (tdm ? 6 : 4) && !g.over) {
         g.spawnT = 5 + Math.random() * 3;
         for (let tries = 0; tries < 20; tries++) {
           const x = 120 + Math.random() * (WORLD.width - 240),
@@ -966,11 +1173,12 @@ function ArenaGame() {
         for (const v of g.cars) {
           if (!v.alive || v === b.owner || b.life <= 0 || Math.hypot(b.x - v.x, b.y - v.y) >= 32)
             continue;
+          if (tdm && (v.team === b.owner.team || (v.inv ?? 0) > 0)) continue; // no friendly fire, spawn shield
           const target = carAt(v.carId);
           v.hp -= b.damage * (1 - target.armor / 250);
           b.life = 0;
           v.hit = 0.14;
-          fx.impact(b.x, b.y, dir, b.owner.bot ? PAL.hostile : PAL.friendly, 10);
+          fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
           if (v === p) {
             fx.shake = Math.max(fx.shake, 4);
             sfx.hit();
@@ -981,6 +1189,10 @@ function ArenaGame() {
             fx.explode(v.x, v.y, target.color);
             sfx.boom();
             if (b.owner === p) g.kills++;
+            if (tdm) {
+              v.respawn = TDM_RESPAWN;
+              if (!g.over) tdm.score[b.owner.team === 1 ? 1 : 0]++;
+            }
           }
         }
       }
@@ -996,12 +1208,14 @@ function ArenaGame() {
       }
       const alive = g.cars.filter((x) => x.alive).length;
       if (!g.over) {
-        if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
-        else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+        if (!tdm) {
+          if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
+          else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+        }
       } else {
         g.over.t -= dt;
         if (g.over.t <= 0) {
-          finishMatch(g.over.won, g.over.position);
+          finishMatch(g.over.won, g.over.position, tdm, g.kills);
           return;
         }
       }
@@ -1012,6 +1226,7 @@ function ArenaGame() {
             x: (v.x / WORLD.width) * 100,
             y: (v.y / WORLD.height) * 100,
             me: v === p,
+            team: v.team,
           }));
         setHud({
           hp: Math.ceil(p.hp),
@@ -1019,6 +1234,15 @@ function ArenaGame() {
           kills: g.kills,
           time: Math.floor((now - g.started) / 1000),
           dots,
+          tdm: tdm
+            ? {
+                blue: tdm.score[0],
+                red: tdm.score[1],
+                left: Math.max(0, Math.ceil(tdm.limit - tdm.time)),
+                respawn: p.alive ? 0 : Math.max(1, Math.ceil(p.respawn ?? 0)),
+                team: tdm.team,
+              }
+            : undefined,
         });
         g.lastHud = now;
       }
@@ -1073,6 +1297,39 @@ function ArenaGame() {
       ctx.scale(zoom, zoom);
       // polished grey tile floor (pre-rendered once, then just blitted)
       ctx.drawImage(getFloor(), 0, 0);
+      if (g?.tdm) {
+        // the two team bases: glowing spawn circles
+        for (let tm = 0; tm < 2; tm++) {
+          const sp = TDM_SPAWN[tm] as { x: number; y: number };
+          const col = TEAM_COL[tm] as string;
+          const pl = 0.6 + 0.4 * Math.sin(t * 2.5 + tm);
+          const gl = ctx.createRadialGradient(sp.x, sp.y, 20, sp.x, sp.y, SPAWN_R + 40);
+          gl.addColorStop(0, hexA(col, 0.32));
+          gl.addColorStop(0.8, hexA(col, 0.16));
+          gl.addColorStop(1, hexA(col, 0));
+          ctx.fillStyle = gl;
+          ctx.beginPath();
+          ctx.arc(sp.x, sp.y, SPAWN_R + 40, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = hexA(col, 0.5 + 0.35 * pl);
+          ctx.lineWidth = 8;
+          ctx.beginPath();
+          ctx.arc(sp.x, sp.y, SPAWN_R, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([22, 16]);
+          ctx.lineDashOffset = -t * 30;
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.arc(sp.x, sp.y, SPAWN_R * 0.68, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = hexA(col, 0.85);
+          ctx.font = '16px "Press Start 2P", monospace';
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(tm === 0 ? "BLUE BASE" : "RED BASE", sp.x, sp.y - SPAWN_R - 26);
+        }
+      }
       // shipping containers + crates (solid obstacles)
       blocks.forEach(([x, y, w, h], i) => drawBox(ctx, x, y, w, h, i));
       // tyre dust, sparks, smoke sit under the cars
@@ -1177,7 +1434,11 @@ function ArenaGame() {
           }
           // One simple circle under every car: blue = you, red = everyone else.
           const r = Math.max(car.w, car.h) * 0.62;
-          const rgb = v === p ? "56,160,255" : "255,64,64";
+          const rgb = g.tdm
+            ? (TEAM_RGB[v.team === 1 ? 1 : 0] as string)
+            : v === p
+              ? "56,160,255"
+              : "255,64,64";
           ctx.fillStyle = `rgba(${rgb},${v.hit > 0 ? 0.55 : 0.28})`;
           ctx.beginPath();
           ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -1187,6 +1448,14 @@ function ArenaGame() {
           ctx.stroke();
           if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
           else drawFallbackCar(ctx, car, car.w, car.h);
+          if ((v.inv ?? 0) > 0) {
+            // fresh-spawn shield
+            ctx.strokeStyle = `rgba(255,255,255,${0.4 + 0.4 * Math.sin(t * 18)})`;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 14, 0, Math.PI * 2);
+            ctx.stroke();
+          }
           if (v.speedT > 0) {
             ctx.strokeStyle = POWER_COLOR.speed;
             ctx.lineWidth = 3;
@@ -1234,7 +1503,7 @@ function ArenaGame() {
           }
         }
         for (const b of g.bullets)
-          drawTracer(ctx, b.x, b.y, b.vx, b.vy, b.owner.bot ? PAL.hostile : PAL.friendly);
+          drawTracer(ctx, b.x, b.y, b.vx, b.vy, bulletCol(!!g.tdm, b.owner));
       }
       fx.draw(ctx);
       const pulse = 0.55 + 0.45 * Math.sin(t * 3);
@@ -1338,8 +1607,17 @@ function ArenaGame() {
           pausedRef.current = v;
           setPaused(v);
         }
-        if (m === "select" && pickingRef.current) {
-          if (key === "enter" || key === "f" || key === "1") {
+        if (m === "select" && pickingRef.current && teamPickRef.current) {
+          if (key === "b" || key === "1") {
+            setAsk(false);
+            startTdmRef.current(0);
+          } else if (key === "r" || key === "2") {
+            setAsk(false);
+            startTdmRef.current(1);
+          } else if (key === "escape") openTeamPick(false);
+        } else if (m === "select" && pickingRef.current) {
+          if (key === "t" || key === "3") openTeamPick(true);
+          else if (key === "enter" || key === "f" || key === "1") {
             setAsk(false);
             startRef.current();
           } else if (key === "s" || key === "2") raceRef.current();
@@ -1367,7 +1645,7 @@ function ArenaGame() {
       window.removeEventListener("blur", clear);
       window.removeEventListener("pointerdown", unlock);
     };
-  }, [pick, setAsk]);
+  }, [pick, setAsk, openTeamPick]);
 
   const hold = (key: string) => ({
     onPointerDown: (e: React.PointerEvent) => {
@@ -1558,7 +1836,46 @@ function ArenaGame() {
           </div>
         )}
 
-        {mode === "select" && picking && (
+        {mode === "select" && picking && teamPick && (
+          <div className="overlay" onClick={() => setAsk(false)}>
+            <div className="win overlay-box mode-pick" onClick={(e) => e.stopPropagation()}>
+              <div className="win-title">
+                <span>TDM · CHOOSE YOUR TEAM</span>
+              </div>
+              <div className="win-body center">
+                <button
+                  type="button"
+                  className="arcade-btn start-btn team-blue-btn"
+                  onClick={() => {
+                    setAsk(false);
+                    startTdmRef.current(0);
+                  }}
+                >
+                  <Shield size={18} /> BLUE TEAM <small>SPAWN ON THE LEFT · B</small>
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn start-btn team-red-btn"
+                  onClick={() => {
+                    setAsk(false);
+                    startTdmRef.current(1);
+                  }}
+                >
+                  <Shield size={18} /> RED TEAM <small>SPAWN ON THE RIGHT · R</small>
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn alt-btn"
+                  onClick={() => openTeamPick(false)}
+                >
+                  BACK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "select" && picking && !teamPick && (
           <div className="overlay" onClick={() => setAsk(false)}>
             <div className="win overlay-box mode-pick" onClick={(e) => e.stopPropagation()}>
               <div className="win-title">
@@ -1581,6 +1898,13 @@ function ArenaGame() {
                   onClick={() => raceRef.current()}
                 >
                   <Gauge size={18} /> SPEED <small>RACE · DODGE · FIRE SPEED · S</small>
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn start-btn tdm-btn"
+                  onClick={() => openTeamPick(true)}
+                >
+                  <Shield size={18} /> TDM <small>TEAM DEATHMATCH · 6 vs 6 · T</small>
                 </button>
                 <button type="button" className="arcade-btn alt-btn" onClick={() => setAsk(false)}>
                   BACK
@@ -1607,7 +1931,15 @@ function ArenaGame() {
               <div className="hud-brand">
                 <Crosshair size={14} /> LAST CAR <b>STANDING</b>
               </div>
-              <div className="hud-timer">{fmtTime(hud.time)}</div>
+              {hud.tdm ? (
+                <div className="hud-tdm" aria-label="Team score">
+                  <b className="tdm-score tdm-blue">{hud.tdm.blue}</b>
+                  <span className="tdm-time">{fmtTime(hud.tdm.left)}</span>
+                  <b className="tdm-score tdm-red">{hud.tdm.red}</b>
+                </div>
+              ) : (
+                <div className="hud-timer">{fmtTime(hud.time)}</div>
+              )}
               <div className="hud-top-right">
                 <button
                   type="button"
@@ -1628,12 +1960,28 @@ function ArenaGame() {
               </div>
             </div>
             <div className="hud-left win">
-              <span className="hud-eyebrow">STILL IN THE FIGHT</span>
-              <div className="hud-count">
-                <b>{String(hud.alive).padStart(2, "0")}</b>
-                <span>/{TOTAL}</span>
-              </div>
-              <span className="hud-kills">{String(hud.kills).padStart(2, "0")} ELIMINATIONS</span>
+              {hud.tdm ? (
+                <>
+                  <span className="hud-eyebrow">
+                    YOU ARE {hud.tdm.team === 0 ? "BLUE" : "RED"} · 6v6
+                  </span>
+                  <div className="hud-count">
+                    <b>{String(hud.kills).padStart(2, "0")}</b>
+                    <span>KILLS</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="hud-eyebrow">STILL IN THE FIGHT</span>
+                  <div className="hud-count">
+                    <b>{String(hud.alive).padStart(2, "0")}</b>
+                    <span>/{TOTAL}</span>
+                  </div>
+                  <span className="hud-kills">
+                    {String(hud.kills).padStart(2, "0")} ELIMINATIONS
+                  </span>
+                </>
+              )}
             </div>
             <div className="hud-vitals win">
               <div className="vital-head">
@@ -1652,7 +2000,26 @@ function ArenaGame() {
             </div>
             <div className="hud-map win">
               <span className="hud-eyebrow">RADAR</span>
-              <div className="map-frame">
+              <div
+                className="map-frame"
+                style={
+                  hud.tdm
+                    ? { height: "auto", aspectRatio: `${WORLD.width} / ${WORLD.height}` }
+                    : undefined
+                }
+              >
+                {hud.tdm &&
+                  TDM_SPAWN.map((sp, i) => (
+                    <i
+                      key={`b${i}`}
+                      className="map-base"
+                      style={{
+                        left: `${(sp.x / WORLD.width) * 100}%`,
+                        top: `${(sp.y / WORLD.height) * 100}%`,
+                        borderColor: TEAM_COL[i],
+                      }}
+                    />
+                  ))}
                 {blocks.map(([x, y, w, h], i) => (
                   <i
                     key={i}
@@ -1669,7 +2036,11 @@ function ArenaGame() {
                   <i
                     key={i}
                     className={d.me ? "map-player" : "map-dot"}
-                    style={{ left: `${d.x}%`, top: `${d.y}%` }}
+                    style={{
+                      left: `${d.x}%`,
+                      top: `${d.y}%`,
+                      ...(hud.tdm && !d.me ? { background: TEAM_COL[d.team === 1 ? 1 : 0] } : null),
+                    }}
                   />
                 ))}
               </div>
@@ -1725,6 +2096,12 @@ function ArenaGame() {
                 </button>
               </div>
             </div>
+            {hud.tdm && hud.tdm.respawn > 0 && !paused && (
+              <div className="respawn-banner" role="status">
+                <span>ELIMINATED · RESPAWNING ON YOUR BASE</span>
+                <b key={hud.tdm.respawn}>{hud.tdm.respawn}</b>
+              </div>
+            )}
             {paused && (
               <div className="overlay">
                 <div className="win overlay-box">
@@ -1768,7 +2145,27 @@ function ArenaGame() {
               </div>
               <div className="win-body center">
                 <h1 className="big-title">
-                  {result.won ? (
+                  {result.tdm ? (
+                    result.tdm.draw ? (
+                      <>
+                        MATCH
+                        <br />
+                        <em>DRAW!</em>
+                      </>
+                    ) : result.won ? (
+                      <>
+                        TEAM
+                        <br />
+                        <em>VICTORY!</em>
+                      </>
+                    ) : (
+                      <>
+                        TEAM
+                        <br />
+                        <em>DEFEAT</em>
+                      </>
+                    )
+                  ) : result.won ? (
                     <>
                       LAST CAR
                       <br />
@@ -1783,12 +2180,22 @@ function ArenaGame() {
                   )}
                 </h1>
                 <p className="result-sub">
-                  {result.won ? "THE ARENA IS YOURS." : "THE ARENA CLAIMS ANOTHER."}
+                  {result.tdm
+                    ? `BLUE ${result.tdm.blue} - ${result.tdm.red} RED`
+                    : result.won
+                      ? "THE ARENA IS YOURS."
+                      : "THE ARENA CLAIMS ANOTHER."}
                 </p>
                 <div className="result-stats">
                   <div>
-                    <span>POSITION</span>
-                    <b>#{String(result.position).padStart(2, "0")}</b>
+                    <span>{result.tdm ? "TEAM" : "POSITION"}</span>
+                    <b>
+                      {result.tdm
+                        ? result.tdm.team === 0
+                          ? "BLUE"
+                          : "RED"
+                        : `#${String(result.position).padStart(2, "0")}`}
+                    </b>
                   </div>
                   <div>
                     <span>XP</span>
@@ -1802,7 +2209,9 @@ function ArenaGame() {
                 <button
                   type="button"
                   className="arcade-btn start-btn"
-                  onClick={() => startRef.current()}
+                  onClick={() =>
+                    result.tdm ? startTdmRef.current(result.tdm.team) : startRef.current()
+                  }
                 >
                   <Play size={16} /> {result.won ? "PLAY AGAIN" : "CONTINUE?"}
                 </button>
@@ -2056,7 +2465,7 @@ function getFloor(): HTMLCanvasElement {
   f.lineWidth = 6;
   f.setLineDash([18, 14]);
   f.beginPath();
-  f.arc(1200, 860, 120, 0, Math.PI * 2);
+  f.arc(WORLD.width / 2, WORLD.height / 2, 120, 0, Math.PI * 2);
   f.stroke();
   f.setLineDash([]);
   // overhead light pools (additive)
