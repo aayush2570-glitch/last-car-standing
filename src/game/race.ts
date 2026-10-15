@@ -815,6 +815,8 @@ export class RaceView {
   race: Race;
   fx = new Fx();
   result: RaceResult | null = null;
+  /** label above the player's car ("YOU", or P1 / P2 in split screen) */
+  tag = "YOU";
   private sprites = getSprites();
   private props = getProps();
   private camX: number;
@@ -2284,7 +2286,7 @@ export class RaceView {
         ctx.font = '9px "Press Start 2P", monospace';
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillText("YOU", c.x, c.y - 61);
+        ctx.fillText(this.tag, c.x, c.y - 61);
       }
     }
     fx.draw(ctx);

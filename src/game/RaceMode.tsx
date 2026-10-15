@@ -64,6 +64,10 @@ export function RaceMode({
     const startedTwo = twoRef.current && !!canvas2 && !!ctx2;
     const view = new RaceView(carIndex, startedTwo ? seed : undefined);
     const view2 = startedTwo ? new RaceView(carIndex2, seed) : null;
+    if (view2) {
+      view.tag = "P1";
+      view2.tag = "P2";
+    }
     let frame = 0,
       prev = performance.now(),
       shown = false,
