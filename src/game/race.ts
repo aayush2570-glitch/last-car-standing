@@ -245,6 +245,9 @@ export type Racer = {
   blasts: number;
   bump: number;
   top: number;
+  /** near misses / nitro canisters collected (per racer so both humans keep their own) */
+  nr: number;
+  nt: number;
 };
 export type Ev = {
   t:
@@ -307,23 +310,37 @@ export class Race {
   picks: Pickup[] = [];
   ev: Ev[] = [];
   me: Racer;
+  /** player 2 in the 2-player split screen: a second human racing on this very same road */
+  me2?: Racer | undefined;
+  in2 = { steer: 0, nitro: false };
   clock = -3.4;
   order: Racer[] = [];
-  near = 0;
-  nitros = 0;
+  get near() {
+    return this.me.nr;
+  }
+  get nitros() {
+    return this.me.nt;
+  }
   private cd = 4;
   private went = false;
 
-  constructor(pick: number) {
+  constructor(pick: number, pick2?: number) {
+    const two = pick2 !== undefined;
     const slots = [0, 1, 2, 3, 4, 5, 6, 7].sort(() => Math.random() - 0.5);
     const mine = slots.indexOf(2 + Math.floor(Math.random() * 4));
     [slots[0], slots[mine]] = [slots[mine] as number, slots[0] as number];
+    if (two) {
+      // player 2 gets another mid-pack grid slot, next to the pack like player 1
+      let j = slots.indexOf(2 + Math.floor(Math.random() * 4));
+      if (j <= 0) j = slots.findIndex((v, k) => k > 0 && v >= 2 && v <= 5);
+      [slots[1], slots[j]] = [slots[j] as number, slots[1] as number];
+    }
     const cols = [-170, 0, 170];
     for (let i = 0; i < N; i++) {
-      const id = (pick + i) % cars.length;
+      const id = two && i === 1 ? (pick2 as number) % cars.length : (pick + i) % cars.length;
       const s = slots[i] as number;
       const base = 330 + carAt(id).speed * 3.2;
-      const bot = i > 0;
+      const bot = i > (two ? 1 : 0);
       this.cars.push({
         id,
         x: cols[s % 3] as number,
@@ -347,9 +364,12 @@ export class Race {
         blasts: 0,
         bump: 0,
         top: 0,
+        nr: 0,
+        nt: 0,
       });
     }
     this.me = this.cars[0] as Racer;
+    if (two) this.me2 = this.cars[1] as Racer;
     this.genObstacles();
   }
 
@@ -452,6 +472,10 @@ export class Race {
   jetSoon(o: Obs) {
     return this.phase(o) >= 1.2;
   }
+  /** y the bots rubber-band around: the human (or the middle of the two humans) */
+  private leadY() {
+    return this.me2 ? (this.me.y + this.me2.y) / 2 : this.me.y;
+  }
   rank(c: Racer) {
     let r = 1;
     for (const o of this.cars) if (o.y < c.y) r++;
@@ -459,6 +483,7 @@ export class Race {
   }
 
   step(dt: number, steer: number, nitro: boolean) {
+    this.ev.length = 0;
     this.clock += dt;
     if (this.clock < 0) {
       const n = Math.ceil(-this.clock);
@@ -487,8 +512,11 @@ export class Race {
       }
     }
     const go = this.clock >= 0;
-    for (const c of this.cars)
-      this.drive(c, dt, go, c === this.me && !c.fin ? steer : undefined, nitro);
+    for (const c of this.cars) {
+      if (c === this.me && !c.fin) this.drive(c, dt, go, steer, nitro);
+      else if (c === this.me2 && !c.fin) this.drive(c, dt, go, this.in2.steer, this.in2.nitro);
+      else this.drive(c, dt, go, undefined, false);
+    }
     this.collide();
   }
 
@@ -524,7 +552,7 @@ export class Race {
     }
     let cap = c.maxV * (c.fire ? FIRE : 1);
     if (c.fin) cap = c.maxV * 0.45;
-    else if (c.bot) cap *= clamp(1 - (this.me.y - c.y) * 0.00012, 0.93, 1.07);
+    else if (c.bot) cap *= clamp(1 - (this.leadY() - c.y) * 0.00012, 0.93, 1.07);
     const acc = c.fire ? 340 : 150 + 240 * Math.max(0, 1 - c.v / c.maxV);
     c.v = c.v < cap ? Math.min(cap, c.v + acc * dt) : Math.max(cap, c.v - 300 * dt);
     c.top = Math.max(c.top, c.v);
@@ -563,7 +591,7 @@ export class Race {
       if (Math.abs(c.x - p.x) < hx + 26 && Math.abs(c.y - p.y) < hy + 26) {
         p.taken = true;
         c.nitro = Math.min(1, c.nitro + NITRO_PICK);
-        if (c === this.me) this.nitros++;
+        if (!c.bot) c.nt++;
         this.ev.push({ t: "pick", c, x: p.x, y: p.y });
       }
     }
@@ -574,14 +602,14 @@ export class Race {
       const jx = o.kind === "cannon" ? roadX(o.y) + o.side * (HALF - 200) : o.x;
       const dx = Math.abs(c.x - jx) - hx - o.hw;
       const dy = Math.abs(c.y - o.y) - hy - o.hh;
-      if (c === this.me && !o.nm && SOLID.includes(o.kind)) {
+      if (!c.bot && !o.nm && SOLID.includes(o.kind)) {
         if (dy < 0 && dx >= 0) o.min = Math.min(o.min, dx);
         if (o.y > c.y + hy + o.hh + 4 && o.min < 28 && !o.hit) {
           o.nm = true;
-          this.near++;
+          c.nr++;
           c.v += 12;
           c.nitro = Math.min(1, c.nitro + 0.05); // risky driving charges the tank a little
-          this.ev.push({ t: "near", c, n: this.near });
+          this.ev.push({ t: "near", c, n: c.nr });
         }
       }
       if (dx < 0 && dy < 0 && c.inv <= 0 && !c.fin) this.hit(c, o);
@@ -774,18 +802,17 @@ export class Race {
     return clamp((c.lane - c.x) / 70, -1, 1);
   }
 
-  result(): RaceResult {
-    const pos = this.order.indexOf(this.me) + 1;
+  result(me: Racer = this.me): RaceResult {
+    const pos = this.order.indexOf(me) + 1;
     return {
       pos,
-      time: this.me.fin,
-      top: Math.round(this.me.top * 0.36),
-      hits: this.me.hits,
-      near: this.near,
-      blasts: this.me.blasts,
-      nitros: this.nitros,
-      xp:
-        (pos === 1 ? 750 : Math.max(80, (N - pos) * 90 + 100)) + this.near * 10 + this.nitros * 15,
+      time: me.fin,
+      top: Math.round(me.top * 0.36),
+      hits: me.hits,
+      near: me.nr,
+      blasts: me.blasts,
+      nitros: me.nt,
+      xp: (pos === 1 ? 750 : Math.max(80, (N - pos) * 90 + 100)) + me.nr * 10 + me.nt * 15,
       total: N,
     };
   }
@@ -817,6 +844,8 @@ export class RaceView {
   result: RaceResult | null = null;
   /** label above the player's car ("YOU", or P1 / P2 in split screen) */
   tag = "YOU";
+  /** which racer of the Race this view follows (0 = player 1, 1 = player 2) */
+  who = 0;
   private sprites = getSprites();
   private props = getProps();
   private camX: number;
@@ -834,27 +863,12 @@ export class RaceView {
   private lines: { x: number; y: number; s: number }[] = [];
   private lastNow = 0;
 
-  /** `seed` builds the same track (obstacles, pickups, grid slot) every time — used so both
-   *  players of the 2-player split screen race on an identical road. */
-  constructor(pick: number, seed?: number) {
-    if (seed === undefined) this.race = new Race(pick);
-    else {
-      const real = Math.random;
-      let a = seed >>> 0;
-      Math.random = () => {
-        a = (a + 0x6d2b79f5) >>> 0;
-        let t = a;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-      };
-      try {
-        this.race = new Race(pick);
-      } finally {
-        Math.random = real;
-      }
-    }
-    this.camX = this.race.me.x;
+  /** `shared` puts this view on an existing Race, so both players of the 2-player split screen
+   *  drive on the very same road, with the very same bots, and can see (and bump) each other. */
+  constructor(pick: number, shared?: { race: Race; who: number }) {
+    this.race = shared ? shared.race : new Race(pick);
+    this.who = shared ? shared.who : 0;
+    this.camX = (this.race.cars[this.who] as Racer).x;
   }
 
   private pop(t: string, c: string) {
@@ -865,16 +879,17 @@ export class RaceView {
     this.banner = { t, l, c };
   }
 
-  update(dt: number, steer: number, nitro: boolean, sfx: Sfx) {
+  /** `step = false` for the second view of a shared race: the first view already advanced it */
+  update(dt: number, steer: number, nitro: boolean, sfx: Sfx, step = true) {
     const R = this.race,
-      me = R.me,
+      me = R.cars[this.who] as Racer,
       fx = this.fx;
     let sdt = dt;
     if (this.stop > 0) {
       this.stop -= dt;
-      sdt = dt * 0.12; // hit-stop: freeze-frame punch on impact
+      if (!R.me2) sdt = dt * 0.12; // hit-stop: freeze-frame punch on impact (not on a shared race)
     }
-    R.step(sdt, steer, nitro);
+    if (step) R.step(sdt, steer, nitro);
     fx.update(dt);
     const near = (c: Racer) => Math.abs(c.y - me.y) < 700;
     const dist = (x: number, y: number) => Math.hypot(x - me.x, y - me.y);
@@ -1106,7 +1121,7 @@ export class RaceView {
           grow: 260,
         });
         if (mine) this.pop("BACK IN!", PAL.cyan);
-      } else if (e.t === "near") {
+      } else if (e.t === "near" && e.c === me) {
         this.combo++;
         sfx.chime(this.combo);
         this.pop(this.combo > 1 ? `NEAR MISS x${this.combo}` : "NEAR MISS!", PAL.cyan);
@@ -1154,8 +1169,6 @@ export class RaceView {
           });
       }
     }
-    R.ev.length = 0;
-
     // zone change banner
     const zi = zoneIndex(me.y);
     if (zi !== this.zone) {
@@ -1312,7 +1325,7 @@ export class RaceView {
     this.pops = this.pops.filter((p) => p.l > 0);
     sfx.level = me.fire ? 2 : 1;
     sfx.engine(ratio, me.fire);
-    if (me.fin && R.clock - me.fin > 1.8 && !this.result) this.result = R.result();
+    if (me.fin && R.clock - me.fin > 1.8 && !this.result) this.result = R.result(me);
   }
 
   private flashCol = "#ff2b4d";
@@ -1464,7 +1477,7 @@ export class RaceView {
 
   draw(ctx: CanvasRenderingContext2D, W: number, H: number, now: number) {
     const R = this.race,
-      me = R.me,
+      me = R.cars[this.who] as Racer,
       fx = this.fx,
       t = now / 1000;
     const dt = Math.min(0.05, Math.max(0, t - this.lastNow));
@@ -2287,6 +2300,15 @@ export class RaceView {
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(this.tag, c.x, c.y - 61);
+      } else if (R.me2 && (c === R.me || c === R.me2)) {
+        // the other human of the split screen
+        ctx.fillStyle = "#3dff7a";
+        ctx.fillRect(c.x - 17, c.y - 70, 34, 16);
+        ctx.fillStyle = "#1a0b3d";
+        ctx.font = '9px "Press Start 2P", monospace';
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(c === R.me ? "P1" : "P2", c.x, c.y - 61);
       }
     }
     fx.draw(ctx);
@@ -2360,7 +2382,7 @@ export class RaceView {
 
   private hud(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
     const R = this.race,
-      me = R.me;
+      me = R.cars[this.who] as Racer;
     const mob = W < 600;
     const rank = R.rank(me);
     this.text(ctx, String(rank), 18, 66, mob ? 34 : 44, PAL.yellow);
@@ -2444,7 +2466,7 @@ export class RaceView {
         Math.floor(t * 3) % 2 ? NITRO : PAL.white,
         "center",
       );
-    else if (R.nitros === 0 && R.clock > 0)
+    else if (me.nt === 0 && R.clock > 0)
       this.text(ctx, "FIND NITRO CANISTERS", W / 2, ny - 14, 8, "#a99ee0", "center");
 
     // progress rail (coloured by zone)

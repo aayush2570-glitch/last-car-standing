@@ -9,7 +9,7 @@ import {
   VolumeX,
   Zap,
 } from "lucide-react";
-import { RaceView, type RaceResult } from "./race";
+import { Race, RaceView, type RaceResult } from "./race";
 import type { Sfx } from "./fx";
 
 type Props = {
@@ -59,11 +59,12 @@ export function RaceMode({
     if (!canvas || !ctx) return;
     const canvas2 = canvas2Ref.current;
     const ctx2 = canvas2?.getContext("2d") ?? null;
-    // both players race the very same road (same seed); each has their own view and car
-    const seed = Math.floor(Math.random() * 2 ** 31);
+    // 2 players = ONE shared race: same road, same bots, both humans on the grid together.
+    // Each player just gets their own camera (view) on it.
     const startedTwo = twoRef.current && !!canvas2 && !!ctx2;
-    const view = new RaceView(carIndex, startedTwo ? seed : undefined);
-    const view2 = startedTwo ? new RaceView(carIndex2, seed) : null;
+    const shared = startedTwo ? new Race(carIndex, carIndex2) : null;
+    const view = new RaceView(carIndex, shared ? { race: shared, who: 0 } : undefined);
+    const view2 = shared ? new RaceView(carIndex2, { race: shared, who: 1 }) : null;
     if (view2) {
       view.tag = "P1";
       view2.tag = "P2";
@@ -109,14 +110,19 @@ export function RaceMode({
         (k.has("arrowleft") || k.has("a") || touch.current.l ? 1 : 0);
       const nitro =
         k.has(" ") || k.has("shift") || k.has("arrowup") || k.has("w") || touch.current.n;
-      if (!pausedRef.current) view.update(dt, steer, nitro, sfx);
-      view.draw(ctx, size.w, size.h, now);
-      if (view2 && ctx2 && two) {
-        const steer2 = (k.has("6") ? 1 : 0) - (k.has("4") ? 1 : 0);
-        const nitro2 = k.has("8") || k.has("0");
-        if (!pausedRef.current) view2.update(dt, steer2, nitro2, silent);
-        view2.draw(ctx2, size.w2, size.h2, now);
+      // 2 PLAYER switched off mid-race: player 2's car is handed over to the bot brain
+      if (shared && !two && shared.me2) shared.me2 = undefined;
+      if (shared) {
+        shared.in2.steer = (k.has("6") ? 1 : 0) - (k.has("4") ? 1 : 0);
+        shared.in2.nitro = k.has("8") || k.has("0");
       }
+      if (!pausedRef.current) {
+        view.update(dt, steer, nitro, sfx);
+        // the race was just advanced by view 1; view 2 only reacts to what happened
+        if (view2) view2.update(dt, 0, false, silent, false);
+      }
+      view.draw(ctx, size.w, size.h, now);
+      if (view2 && ctx2 && two) view2.draw(ctx2, size.w2, size.h2, now);
       if (view.result && !shown) {
         shown = true;
         setRes(view.result);
@@ -151,6 +157,10 @@ export function RaceMode({
     else sfx.startMusic();
   };
 
+  // a pause / result pop-up is up: the centre line, key hints and top buttons get out of its way
+  const modalOpen =
+    (paused && !(res && (!twoP || res2))) || (twoP && !!res && !!res2) || (!twoP && !!res);
+
   const hold = (side: "l" | "r" | "n") => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
@@ -164,7 +174,7 @@ export function RaceMode({
   });
 
   return (
-    <div className={`race-root ${twoP ? "two" : ""}`}>
+    <div className={`race-root ${twoP ? "two" : ""} ${modalOpen ? "modal-open" : ""}`}>
       <canvas ref={canvasRef} className="arena-canvas race-c1" aria-label="Speed race" />
       {twoP && (
         <canvas

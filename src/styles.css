@@ -439,3 +439,11 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 /* race split screen: pause / result pop-ups sit above the centre line and cover both halves */
 .race-root .overlay { z-index: 50; }
 .race-root.two .race-divider { z-index: 35; }
+
+/* pause / result pop-up: nothing from the split-screen HUD may poke through or sit on top of it */
+.race-root.modal-open .race-divider,
+.race-root.modal-open .tp-pane,
+.race-root.modal-open .race-top { visibility: hidden; }
+.race-root.two .overlay { background: rgba(11,6,32,.9); }
+.race-root.two .overlay-box { max-width: 440px; }
+.race-root.two .overlay-box.two-result { max-width: 620px; }
