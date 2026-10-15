@@ -13,6 +13,7 @@ import {
   Zap,
   Gauge,
   Swords,
+  Users,
 } from "lucide-react";
 import { PAL, cars, carAt, drawFallbackCar, getSprites, spriteReady, type Car } from "@/game/cars";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
@@ -84,6 +85,9 @@ type Vehicle = {
   team?: number; // 0 = blue, 1 = red
   respawn?: number;
   inv?: number;
+  /* 2-player split screen: 0 = player 1, 1 = player 2 (undefined for bots) */
+  pi?: number;
+  deadPos?: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -97,8 +101,30 @@ type Projectile = {
   damage: number;
 };
 type Dot = { x: number; y: number; me: boolean; team?: number | undefined };
-type Tdm = { score: [number, number]; time: number; limit: number; team: number; draw?: boolean };
-type TdmHud = { blue: number; red: number; left: number; respawn: number; team: number };
+type Tdm = {
+  score: [number, number];
+  time: number;
+  limit: number;
+  team: number;
+  team2?: number;
+  draw?: boolean;
+};
+type TdmHud = {
+  blue: number;
+  red: number;
+  left: number;
+  respawn: number;
+  team: number;
+  respawn2?: number;
+  team2?: number;
+};
+/** per-player outcome shown on the result card in 2-player mode */
+type TwoRes = {
+  p1: { won: boolean; pos: number; kills: number };
+  p2: { won: boolean; pos: number; kills: number };
+  /** 1 / 2 = that player won outright, 0 = shared result (draw, same team, or a bot won) */
+  winner: number;
+};
 type Game = {
   player: Vehicle;
   cars: Vehicle[];
@@ -108,6 +134,10 @@ type Game = {
   kills: number;
   over: { won: boolean; position: number; t: number } | null;
   trail: number;
+  /* 2-player split screen */
+  player2?: Vehicle;
+  kills2?: number;
+  cam2?: { x: number; y: number };
   powerups: Powerup[];
   spawnT: number;
   cam?: { x: number; y: number };
@@ -202,6 +232,35 @@ const POWER_COLOR: Record<PowerKind, string> = {
 };
 const POWER_LABEL: Record<PowerKind, string> = { health: "+", speed: "»", double: "II" };
 
+/* ───────── 2-player split-screen controls ─────────
+   Player 1: arrow keys (WASD also works) · fire = SPACE
+   Player 2: numpad / number row  8 = up · 2 = down · 4 = left · 6 = right · 0 = fire
+   (change the digits here if you want a different layout) */
+type Ctl = { up: string[]; down: string[]; left: string[]; right: string[]; fire: string[] };
+const P1_CTL: Ctl = {
+  up: ["arrowup", "w"],
+  down: ["arrowdown", "s"],
+  left: ["arrowleft", "a"],
+  right: ["arrowright", "d"],
+  fire: [" "],
+};
+const P2_CTL: Ctl = { up: ["8"], down: ["2"], left: ["4"], right: ["6"], fire: ["0"] };
+const NUMPAD: Record<string, string> = {
+  Numpad0: "0",
+  Numpad1: "1",
+  Numpad2: "2",
+  Numpad3: "3",
+  Numpad4: "4",
+  Numpad5: "5",
+  Numpad6: "6",
+  Numpad7: "7",
+  Numpad8: "8",
+  Numpad9: "9",
+};
+const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
+const P1_COLOR = "56,160,255";
+const P2_COLOR = "61,255,122";
+
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** wrap any angle into [-PI, PI) */
 const wrapAng = (a: number) => a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
@@ -256,6 +315,33 @@ const fmtTime = (s: number) =>
     .toString()
     .padStart(2, "0")}:${(s % 60).toString().padStart(2, "0")}`;
 
+/** who won, for the 2-player result card (called once the match is over) */
+function twoResult(g: Game): TwoRes {
+  const p1 = g.player,
+    p2 = g.player2 as Vehicle;
+  const k1 = g.kills,
+    k2 = g.kills2 ?? 0;
+  const tdm = g.tdm;
+  if (tdm) {
+    const t1 = tdm.team === 1 ? 1 : 0,
+      t2 = (tdm.team2 ?? tdm.team) === 1 ? 1 : 0;
+    const w1 = !tdm.draw && (tdm.score[t1] as number) > (tdm.score[1 - t1] as number);
+    const w2 = !tdm.draw && (tdm.score[t2] as number) > (tdm.score[1 - t2] as number);
+    return {
+      p1: { won: w1, pos: 1, kills: k1 },
+      p2: { won: w2, pos: 1, kills: k2 },
+      winner: t1 === t2 || tdm.draw ? 0 : w1 ? 1 : 2,
+    };
+  }
+  const pos1 = p1.alive ? 1 : (p1.deadPos ?? 2),
+    pos2 = p2.alive ? 1 : (p2.deadPos ?? 2);
+  return {
+    p1: { won: p1.alive && pos1 < pos2, pos: pos1, kills: k1 },
+    p2: { won: p2.alive && pos2 < pos1, pos: pos2, kills: k2 },
+    winner: pos1 < pos2 ? 1 : pos2 < pos1 ? 2 : 0,
+  };
+}
+
 /* ───────────────────────────── component ───────────────────────────── */
 
 function ArenaGame() {
@@ -268,12 +354,15 @@ function ArenaGame() {
     time: number;
     dots: Dot[];
     tdm?: TdmHud | undefined;
+    hp2?: number;
+    kills2?: number;
   }>({ hp: 100, alive: TOTAL, kills: 0, time: 0, dots: [] });
   const [result, setResult] = useState<{
     won: boolean;
     position: number;
     xp: number;
-    tdm?: { blue: number; red: number; team: number; draw: boolean } | undefined;
+    tdm?: { blue: number; red: number; team: number; draw: boolean; team2?: number } | undefined;
+    two?: TwoRes | undefined;
   }>({ won: false, position: TOTAL, xp: 0 });
   const [paused, setPaused] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -307,9 +396,32 @@ function ArenaGame() {
   const pickingRef = useRef(false);
   const askRef = useRef<() => void>(() => {});
   const raceRef = useRef<() => void>(() => {});
-  const startTdmRef = useRef<(team: number) => void>(() => {});
+  const startTdmRef = useRef<(team: number, team2?: number) => void>(() => {});
   const [teamPick, setTeamPick] = useState(false);
   const teamPickRef = useRef(false);
+  /* ── 2-player split screen (always OFF when the page loads) ── */
+  const [twoP, setTwoPState] = useState(false);
+  const twoPRef = useRef(false);
+  const [selected2, setSelected2] = useState(0);
+  const selected2Ref = useRef(0);
+  selected2Ref.current = selected2;
+  /** TDM team choice of each player while the (2-player) team picker is open; -1 = not chosen yet */
+  const [teams, setTeams] = useState<[number, number]>([-1, -1]);
+  const teamsRef = useRef<[number, number]>([-1, -1]);
+  const anchor2Ref = useRef<HTMLDivElement>(null);
+  const show2Ref = useRef<Show>({
+    carId: 0,
+    enter: 0,
+    t: 0,
+    heading: 0,
+    cooldown: 0.4,
+    burstLeft: 0,
+    burstTimer: 1.1,
+    recoil: 0,
+    bullets: [],
+    hits: Array(TARGETS).fill(0) as number[],
+    score: 0,
+  });
 
   const setModeSync = useCallback((m: "select" | "playing" | "result" | "race") => {
     modeRef.current = m;
@@ -342,11 +454,23 @@ function ArenaGame() {
       strafeAng: 0,
       trail: 0,
     };
+    /* 2-player: the second human parks next to the first and takes one bot's place */
+    const two = twoPRef.current;
+    let player2: Vehicle | undefined;
+    if (two) {
+      const idx2 = selected2Ref.current;
+      player.x = 1080;
+      player.pi = 0;
+      player2 = { ...player, x: 1320, carId: idx2, hp: carAt(idx2).hp, pi: 1 };
+    }
     const rivals: Vehicle[] = [];
-    for (let i = 0; i < TOTAL - 1; i++) {
+    for (let i = 0; i < TOTAL - 1 - (two ? 1 : 0); i++) {
       let x = 170 + Math.random() * 2060,
         y = 160 + Math.random() * 1400;
-      if (Math.hypot(x - player.x, y - player.y) < 390) {
+      if (
+        Math.hypot(x - player.x, y - player.y) < 390 ||
+        (player2 && Math.hypot(x - player2.x, y - player2.y) < 390)
+      ) {
         x = 220 + i * 175;
         y = i % 2 ? 340 : 1370;
       }
@@ -376,7 +500,7 @@ function ArenaGame() {
     fxRef.current = new Fx();
     gameRef.current = {
       player,
-      cars: [player, ...rivals],
+      cars: player2 ? [player, player2, ...rivals] : [player, ...rivals],
       bullets: [],
       started: performance.now(),
       lastHud: 0,
@@ -385,10 +509,18 @@ function ArenaGame() {
       trail: 0,
       powerups: [],
       spawnT: 1.5,
+      ...(player2 ? { player2, kills2: 0 } : null),
     };
     keysRef.current.clear();
     pausedRef.current = false;
-    setHud({ hp: playerCar.hp, alive: TOTAL, kills: 0, time: 0, dots: [] });
+    setHud({
+      hp: playerCar.hp,
+      alive: TOTAL,
+      kills: 0,
+      time: 0,
+      dots: [],
+      ...(player2 ? { hp2: player2.hp, kills2: 0 } : null),
+    });
     setPaused(false);
     setModeSync("playing");
     sfxRef.current.blip();
@@ -397,14 +529,22 @@ function ArenaGame() {
 
   /* TDM: 6v6, team = 0 (blue) or 1 (red); the player drives in slot 0 of their team */
   const startTdm = useCallback(
-    (team: number) => {
+    (team: number, team2?: number) => {
       setWorld("tdm");
       const idx = selectedRef.current;
+      const idx2 = selected2Ref.current;
+      const two = twoPRef.current && team2 !== undefined;
       let k = 0;
-      const make = (tm: number, slot: number, isPlayer: boolean): Vehicle => {
+      const make = (
+        tm: number,
+        slot: number,
+        isPlayer: boolean,
+        carId = idx,
+        pi?: number,
+      ): Vehicle => {
         const sp = TDM_SPAWN[tm] as { x: number; y: number };
         const a = ((slot - 1) / 5) * Math.PI * 2;
-        const id = isPlayer ? idx : (k++ + idx + 1) % cars.length;
+        const id = isPlayer ? carId : (k++ + idx + 1) % cars.length;
         return {
           x: sp.x + (slot ? Math.cos(a) * 105 : 0),
           y: sp.y + (slot ? Math.sin(a) * 105 : 0),
@@ -428,12 +568,22 @@ function ArenaGame() {
           team: tm,
           respawn: 0,
           inv: 1.5,
+          ...(pi !== undefined ? { pi } : null),
         };
       };
-      const player = make(team, 0, true);
+      /* humans take the first free slot of their team (two humans on one team sit side by side) */
+      const player = make(team, 0, true, idx, 0);
       const list: Vehicle[] = [player];
-      for (let i = 1; i < 6; i++) list.push(make(team, i, false));
-      for (let i = 0; i < 6; i++) list.push(make(1 - team, i, false));
+      let player2: Vehicle | undefined;
+      const t2 = team2 ?? team;
+      if (two) {
+        player2 = make(t2, t2 === team ? 1 : 0, true, idx2, 1);
+        list.push(player2);
+      }
+      const taken = (tm: number, slot: number) =>
+        (tm === team && slot === 0) || (player2 && tm === t2 && slot === (t2 === team ? 1 : 0));
+      for (const tm of [team, 1 - team])
+        for (let i = 0; i < 6; i++) if (!taken(tm, i)) list.push(make(tm, i, false));
       fxRef.current = new Fx();
       gameRef.current = {
         player,
@@ -446,7 +596,8 @@ function ArenaGame() {
         trail: 0,
         powerups: [],
         spawnT: 1.5,
-        tdm: { score: [0, 0], time: 0, limit: TDM_TIME, team },
+        tdm: { score: [0, 0], time: 0, limit: TDM_TIME, team, ...(two ? { team2: t2 } : null) },
+        ...(player2 ? { player2, kills2: 0 } : null),
       };
       keysRef.current.clear();
       pausedRef.current = false;
@@ -456,7 +607,15 @@ function ArenaGame() {
         kills: 0,
         time: 0,
         dots: [],
-        tdm: { blue: 0, red: 0, left: TDM_TIME, respawn: 0, team },
+        tdm: {
+          blue: 0,
+          red: 0,
+          left: TDM_TIME,
+          respawn: 0,
+          team,
+          ...(two ? { team2: t2, respawn2: 0 } : null),
+        },
+        ...(two ? { hp2: carAt(idx2).hp, kills2: 0 } : null),
       });
       setPaused(false);
       setModeSync("playing");
@@ -476,7 +635,62 @@ function ArenaGame() {
   const openTeamPick = useCallback((v: boolean) => {
     teamPickRef.current = v;
     setTeamPick(v);
+    teamsRef.current = [-1, -1];
+    setTeams([-1, -1]);
   }, []);
+  /** TDM team choice. Single player starts at once; in 2-player each player picks separately. */
+  const chooseTeam = useCallback(
+    (pi: number, team: number) => {
+      if (!twoPRef.current) {
+        setAsk(false);
+        startTdmRef.current(team);
+        return;
+      }
+      const next: [number, number] = [...teamsRef.current];
+      next[pi] = team;
+      teamsRef.current = next;
+      setTeams(next);
+      sfxRef.current.blip();
+      if (next[0] >= 0 && next[1] >= 0) {
+        setAsk(false);
+        startTdmRef.current(next[0], next[1]);
+      }
+    },
+    [setAsk],
+  );
+  /** 2 PLAYER switch. OFF (from anywhere, by either player) drops back to the normal single-player screen. */
+  const setTwoP = useCallback(
+    (on: boolean) => {
+      if (on === twoPRef.current) return;
+      twoPRef.current = on;
+      setTwoPState(on);
+      keysRef.current.clear();
+      sfxRef.current.blip();
+      if (on) {
+        const next = (selectedRef.current + 1) % cars.length;
+        selected2Ref.current = next;
+        setSelected2(next);
+        return;
+      }
+      teamsRef.current = [-1, -1];
+      setTeams([-1, -1]);
+      const g = gameRef.current;
+      if (g?.player2 && modeRef.current === "playing") {
+        // the match carries on for player 1 alone, full screen
+        const gone = g.player2;
+        g.cars = g.cars.filter((c) => c !== gone);
+        g.bullets = g.bullets.filter((b) => b.owner !== gone);
+        delete g.player2;
+        delete g.cam2;
+        if (g.tdm) delete g.tdm.team2;
+        setHud((h) => {
+          const { hp2: _a, kills2: _b, ...rest } = h;
+          return rest;
+        });
+      }
+    },
+    [setHud],
+  );
   askRef.current = () => {
     setAsk(true);
     sfxRef.current.blip();
@@ -489,14 +703,21 @@ function ArenaGame() {
   };
 
   const finishMatch = useCallback(
-    (won: boolean, position: number, tdm?: Tdm, kills = 0) => {
+    (won: boolean, position: number, tdm?: Tdm, kills = 0, two?: TwoRes) => {
       let xp = won ? 750 : Math.max(80, (TOTAL - position) * 90 + 100);
-      let res: { blue: number; red: number; team: number; draw: boolean } | undefined;
+      let res:
+        { blue: number; red: number; team: number; draw: boolean; team2?: number } | undefined;
       if (tdm) {
-        res = { blue: tdm.score[0], red: tdm.score[1], team: tdm.team, draw: !!tdm.draw };
+        res = {
+          blue: tdm.score[0],
+          red: tdm.score[1],
+          team: tdm.team,
+          draw: !!tdm.draw,
+          ...(tdm.team2 !== undefined ? { team2: tdm.team2 } : null),
+        };
         xp = (tdm.draw ? 300 : won ? 750 : 200) + kills * 30;
       }
-      setResult({ won, position, xp, tdm: res });
+      setResult({ won, position, xp, tdm: res, two });
       setModeSync("result");
     },
     [setModeSync],
@@ -506,6 +727,14 @@ function ArenaGame() {
     setSelected(((i % cars.length) + cars.length) % cars.length);
     sfxRef.current.blip();
   }, []);
+  const pick2 = useCallback((i: number) => {
+    setSelected2(((i % cars.length) + cars.length) % cars.length);
+    sfxRef.current.blip();
+  }, []);
+  const pick2Ref = useRef(pick2);
+  pick2Ref.current = pick2;
+  const chooseTeamRef = useRef(chooseTeam);
+  chooseTeamRef.current = chooseTeam;
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -535,6 +764,15 @@ function ArenaGame() {
         fx.dust(cx - ar.width * 0.35 + Math.random() * 40, cy + (Math.random() - 0.5) * 60);
     }
   }, [selected]);
+  useEffect(() => {
+    const s = show2Ref.current;
+    s.carId = selected2;
+    s.enter = 0;
+    s.bullets = [];
+    s.burstLeft = 0;
+    s.burstTimer = 1.4;
+    s.score = 0;
+  }, [selected2]);
 
   /* ───────────────────────── render / simulation loop ───────────────────────── */
   useEffect(() => {
@@ -562,17 +800,14 @@ function ArenaGame() {
     window.addEventListener("resize", resize);
 
     /* ---------- showroom (garage) ---------- */
-    const stepShowroom = (dt: number) => {
-      const s = showRef.current,
-        fx = fxRef.current,
-        keys = keysRef.current;
+    const stepShow = (s: Show, a: HTMLDivElement | null, holding: boolean, dt: number) => {
+      const fx = fxRef.current;
       const car = carAt(s.carId);
       s.t += dt;
       s.enter = Math.min(1, s.enter + dt / 0.55);
       s.recoil = Math.max(0, s.recoil - dt * 7);
       s.heading = Math.sin(s.t * 0.75) * 0.5;
       for (let i = 0; i < s.hits.length; i++) s.hits[i] = Math.max(0, (s.hits[i] as number) - dt);
-      const holding = keys.has(" ") || keys.has("5") || keys.has("testfire");
       s.burstTimer -= dt;
       if (s.burstTimer <= 0 && s.burstLeft <= 0 && !holding) {
         s.burstLeft = 9;
@@ -582,7 +817,7 @@ function ArenaGame() {
       if ((holding || s.burstLeft > 0) && s.cooldown <= 0 && s.enter >= 1) {
         if (!holding) s.burstLeft--;
         s.cooldown = shotInterval(car) * 0.8;
-        const g = showGeometry();
+        const g = showGeometry(s, a);
         const mx = g.cx + Math.sin(s.heading) * g.carH * 0.56,
           my = g.cy - Math.cos(s.heading) * g.carH * 0.56;
         s.bullets.push({
@@ -601,7 +836,7 @@ function ArenaGame() {
         s.recoil = 1;
         sfxRef.current.shot(0.8 + car.fireRate / 200);
       }
-      const g = showGeometry();
+      const g = showGeometry(s, a);
       for (const b of s.bullets) {
         b.x += b.vx * dt;
         b.y += b.vy * dt;
@@ -631,8 +866,7 @@ function ArenaGame() {
       s.bullets = s.bullets.filter((b) => b.life > 0);
     };
 
-    const showGeometry = () => {
-      const a = anchorRef.current;
+    const showGeometry = (sh: Show, a: HTMLDivElement | null) => {
       let cx = width / 2,
         cy = height / 2,
         w = Math.min(width, 520),
@@ -646,7 +880,7 @@ function ArenaGame() {
         h = ar.height;
       }
       const size = Math.max(160, Math.min(w, h));
-      const car = carAt(showRef.current.carId);
+      const car = carAt(sh.carId);
       const carH = size * 0.5;
       const tSize = Math.max(16, size * 0.085);
       return {
@@ -681,19 +915,18 @@ function ArenaGame() {
       ctx.globalAlpha = 1;
     };
 
-    const renderShowroom = () => {
-      const s = showRef.current,
-        fx = fxRef.current;
-      const car = carAt(s.carId);
-      const g = showGeometry();
-      // backdrop
+    const renderBackdrop = (t: number) => {
       const bg = ctx.createLinearGradient(0, 0, 0, height);
       bg.addColorStop(0, "#0b0620");
       bg.addColorStop(0.55, "#1a0d40");
       bg.addColorStop(1, "#2a0f52");
       ctx.fillStyle = bg;
       ctx.fillRect(0, 0, width, height);
-      drawGrid(s.t, 14, 0.55);
+      drawGrid(t, 14, 0.55);
+    };
+    const renderShowroom = (s: Show, a: HTMLDivElement | null) => {
+      const car = carAt(s.carId);
+      const g = showGeometry(s, a);
       // spotlight tinted with the car colour
       ctx.globalCompositeOperation = "lighter";
       const glow = ctx.createRadialGradient(g.cx, g.cy, 10, g.cx, g.cy, g.size * 0.95);
@@ -774,9 +1007,8 @@ function ArenaGame() {
       else drawFallbackCar(ctx, car, g.carW, g.carH);
       ctx.restore();
 
-      // bullets + particles
+      // bullets
       for (const b of s.bullets) drawTracer(ctx, b.x, b.y, b.vx, b.vy, car.color);
-      fx.draw(ctx);
     };
 
     /* ---------- arena (gameplay) ---------- */
@@ -786,8 +1018,8 @@ function ArenaGame() {
       const fx = fxRef.current,
         sfx = sfxRef.current,
         keys = keysRef.current;
-      const p = g.player,
-        stats = carAt(p.carId);
+      const p = g.player;
+      const humans = g.player2 ? [p, g.player2] : [p];
       const tdm = g.tdm;
       /* TDM: match clock, team respawns (5-4-3-2-1 on your own base) and the final whistle */
       if (tdm && !g.over) {
@@ -833,7 +1065,7 @@ function ArenaGame() {
           if (v === p) {
             g.cam = { x, y };
             sfx.blip();
-          }
+          } else if (v === g.player2) g.cam2 = { x, y };
         }
         if (tdm.time >= tdm.limit) {
           const mine = tdm.score[tdm.team] as number,
@@ -860,48 +1092,49 @@ function ArenaGame() {
           }
         }
       }
-      const canDrive = p.alive && !g.over;
-      if (canDrive) {
-        const forward =
-          Number(keys.has("w") || keys.has("arrowup")) -
-          Number(keys.has("s") || keys.has("arrowdown"));
-        const side =
-          Number(keys.has("d") || keys.has("arrowright")) -
-          Number(keys.has("a") || keys.has("arrowleft"));
+      /* human drivers: player 1 on the arrow keys, player 2 on 8 / 2 / 4 / 6 and 0 to fire */
+      const drive = (h: Vehicle, ctl: Ctl) => {
+        if (!h.alive || g.over) return;
+        const stats = carAt(h.carId);
+        const forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
+        const side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
         if (forward || side) {
           const target = Math.atan2(side, -forward);
-          const delta = ((target - p.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-          p.angle += delta * Math.min(1, dt * 4.2);
-          const pSpeed = stats.speed * 2.15 * (p.speedT > 0 ? 1.6 : 1);
-          p.x += Math.sin(p.angle) * pSpeed * dt;
-          p.y -= Math.cos(p.angle) * pSpeed * dt;
-          g.trail -= dt;
-          if (g.trail <= 0) {
-            g.trail = 0.05;
-            fx.dust(p.x - Math.sin(p.angle) * 32, p.y + Math.cos(p.angle) * 32);
+          const delta = ((target - h.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+          h.angle += delta * Math.min(1, dt * 4.2);
+          const pSpeed = stats.speed * 2.15 * (h.speedT > 0 ? 1.6 : 1);
+          h.x += Math.sin(h.angle) * pSpeed * dt;
+          h.y -= Math.cos(h.angle) * pSpeed * dt;
+          h.trail -= dt;
+          if (h.trail <= 0) {
+            h.trail = 0.05;
+            fx.dust(h.x - Math.sin(h.angle) * 32, h.y + Math.cos(h.angle) * 32);
           }
         }
-        collide(p);
-        if ((keys.has("5") || keys.has(" ")) && p.cooldown <= 0) {
-          const tx = p.x + Math.sin(p.angle) * (stats.h * 0.57),
-            ty = p.y - Math.cos(p.angle) * (stats.h * 0.57);
-          for (const off of p.dblT > 0 ? [-9, 9] : [0]) {
+        collide(h);
+        if (anyKey(keys, ctl.fire) && h.cooldown <= 0) {
+          const tx = h.x + Math.sin(h.angle) * (stats.h * 0.57),
+            ty = h.y - Math.cos(h.angle) * (stats.h * 0.57);
+          for (const off of h.dblT > 0 ? [-9, 9] : [0]) {
             g.bullets.push({
-              x: tx + Math.cos(p.angle) * off,
-              y: ty + Math.sin(p.angle) * off,
-              vx: Math.sin(p.angle) * 570,
-              vy: -Math.cos(p.angle) * 570,
-              owner: p,
+              x: tx + Math.cos(h.angle) * off,
+              y: ty + Math.sin(h.angle) * off,
+              vx: Math.sin(h.angle) * 570,
+              vy: -Math.cos(h.angle) * 570,
+              owner: h,
               life: 2.2,
               damage: stats.damage * 0.16,
             });
           }
-          p.cooldown = shotInterval(stats);
-          fx.muzzle(tx, ty, p.angle, PAL.friendly);
-          fx.shell(p.x + Math.sin(p.angle) * 14, p.y - Math.cos(p.angle) * 14, p.angle);
+          h.cooldown = shotInterval(stats);
+          fx.muzzle(tx, ty, h.angle, h === p ? PAL.friendly : "#3dff7a");
+          fx.shell(h.x + Math.sin(h.angle) * 14, h.y - Math.cos(h.angle) * 14, h.angle);
           sfx.shot(0.8 + stats.fireRate / 200);
         }
-      }
+      };
+      // single player keeps the old extra fire key (5); with two players it belongs to nobody
+      drive(p, g.player2 ? P1_CTL : { ...P1_CTL, fire: [" ", "5"] });
+      if (g.player2) drive(g.player2, P2_CTL);
       /* steering: probe ahead and slide around crates / walls */
       const steer = (v: Vehicle, want: number) => {
         const look = 150;
@@ -946,7 +1179,7 @@ function ArenaGame() {
           (x) =>
             x.alive &&
             x !== bot &&
-            !(g.over && x === p && !p.alive) &&
+            !(g.over && !x.bot && !x.alive) &&
             (!tdm || x.team !== bot.team),
         );
         if (!targets.length) continue;
@@ -1118,7 +1351,7 @@ function ArenaGame() {
             b.y += (dy / d) * push;
             if (pass === 0 && push > 3) {
               fx.impact((a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(dx, -dy), PAL.yellow, 3);
-              if (a === p || b === p) fx.shake = Math.max(fx.shake, 2);
+              if (!a.bot || !b.bot) fx.shake = Math.max(fx.shake, 2);
             }
           }
         }
@@ -1157,7 +1390,7 @@ function ArenaGame() {
           else if (q.kind === "speed") v.speedT = 10 + Math.random() * 2;
           else v.dblT = 10;
           fx.impact(q.x, q.y, 0, POWER_COLOR[q.kind], 12);
-          if (v === p) sfx.blip();
+          if (!v.bot) sfx.blip();
         }
       }
       g.powerups = g.powerups.filter((q) => q.life > 0);
@@ -1179,7 +1412,7 @@ function ArenaGame() {
           b.life = 0;
           v.hit = 0.14;
           fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
-          if (v === p) {
+          if (!v.bot) {
             fx.shake = Math.max(fx.shake, 4);
             sfx.hit();
           }
@@ -1189,6 +1422,7 @@ function ArenaGame() {
             fx.explode(v.x, v.y, target.color);
             sfx.boom();
             if (b.owner === p) g.kills++;
+            else if (g.player2 && b.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
             if (tdm) {
               v.respawn = TDM_RESPAWN;
               if (!g.over) tdm.score[b.owner.team === 1 ? 1 : 0]++;
@@ -1199,7 +1433,7 @@ function ArenaGame() {
       g.bullets = g.bullets.filter(
         (b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height,
       );
-      p.cooldown = Math.max(0, p.cooldown - dt);
+      for (const h of humans) h.cooldown = Math.max(0, h.cooldown - dt);
       for (const v of g.cars) {
         v.hit = Math.max(0, v.hit - dt);
         v.speedT = Math.max(0, v.speedT - dt);
@@ -1207,15 +1441,24 @@ function ArenaGame() {
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
       }
       const alive = g.cars.filter((x) => x.alive).length;
+      const p2 = g.player2;
       if (!g.over) {
         if (!tdm) {
-          if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
-          else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+          if (!p2) {
+            if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
+            else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+          } else {
+            // 2 players: a wrecked player spectates; the match ends when one car is left or both are out
+            for (const h of humans) if (!h.alive && h.deadPos === undefined) h.deadPos = alive + 1;
+            if (!p.alive && !p2.alive)
+              g.over = { won: false, position: Math.min(p.deadPos ?? 2, p2.deadPos ?? 2), t: 1.6 };
+            else if (alive === 1) g.over = { won: p.alive, position: 1, t: 1.1 };
+          }
         }
       } else {
         g.over.t -= dt;
         if (g.over.t <= 0) {
-          finishMatch(g.over.won, g.over.position, tdm, g.kills);
+          finishMatch(g.over.won, g.over.position, tdm, g.kills, p2 ? twoResult(g) : undefined);
           return;
         }
       }
@@ -1241,8 +1484,15 @@ function ArenaGame() {
                 left: Math.max(0, Math.ceil(tdm.limit - tdm.time)),
                 respawn: p.alive ? 0 : Math.max(1, Math.ceil(p.respawn ?? 0)),
                 team: tdm.team,
+                ...(p2
+                  ? {
+                      team2: tdm.team2 ?? tdm.team,
+                      respawn2: p2.alive ? 0 : Math.max(1, Math.ceil(p2.respawn ?? 0)),
+                    }
+                  : null),
               }
             : undefined,
+          ...(p2 ? { hp2: Math.ceil(p2.hp), kills2: g.kills2 ?? 0 } : null),
         });
         g.lastHud = now;
       }
@@ -1267,25 +1517,25 @@ function ArenaGame() {
       }
     };
 
-    const renderArena = (t: number) => {
+    /** draws the world once, from one player's camera, into a (width x height) viewport */
+    const drawView = (width: number, height: number, t: number, dtc: number, pi: number) => {
       const g = gameRef.current,
         fx = fxRef.current;
-      const p = g?.player;
+      const p = pi === 1 ? g?.player2 : g?.player;
       const zoom = Math.min(width / 820, height / 560, 1);
       let cx = p ? p.x : WORLD.width / 2,
         cy = p ? p.y : WORLD.height / 2;
       if (g && p) {
         // smooth camera that looks a little ahead of where the player is driving
-        const dtc = Math.min(0.05, Math.max(0, t - (g.camT ?? t)));
-        g.camT = t;
         const tx = p.x + (p.vx ?? 0) * 0.22,
           ty = p.y + (p.vy ?? 0) * 0.22;
-        if (!g.cam) g.cam = { x: p.x, y: p.y };
+        const camKey = pi === 1 ? "cam2" : "cam";
+        const cam = (g[camKey] ??= { x: p.x, y: p.y });
         const k = 1 - Math.exp(-dtc * 9);
-        g.cam.x += (tx - g.cam.x) * k;
-        g.cam.y += (ty - g.cam.y) * k;
-        cx = g.cam.x;
-        cy = g.cam.y;
+        cam.x += (tx - cam.x) * k;
+        cam.y += (ty - cam.y) * k;
+        cx = cam.x;
+        cy = cam.y;
       }
       const [sx, sy] = fx.offset();
       const ox = width / 2 - cx * zoom + sx,
@@ -1436,9 +1686,11 @@ function ArenaGame() {
           const r = Math.max(car.w, car.h) * 0.62;
           const rgb = g.tdm
             ? (TEAM_RGB[v.team === 1 ? 1 : 0] as string)
-            : v === p
-              ? "56,160,255"
-              : "255,64,64";
+            : g.player2 && v === g.player2
+              ? P2_COLOR
+              : !v.bot
+                ? P1_COLOR
+                : "255,64,64";
           ctx.fillStyle = `rgba(${rgb},${v.hit > 0 ? 0.55 : 0.28})`;
           ctx.beginPath();
           ctx.arc(0, 0, r, 0, Math.PI * 2);
@@ -1471,20 +1723,25 @@ function ArenaGame() {
             ctx.stroke();
           }
           ctx.restore();
-          if (v === p || v.hp < car.hp * 0.85) {
+          if (!v.bot || v.hp < car.hp * 0.85) {
             const pct = Math.max(0, v.hp / car.hp);
             ctx.fillStyle = "#000";
             ctx.fillRect(v.x - 26, v.y - 50, 52, 9);
             ctx.fillStyle = "#2a1a63";
             ctx.fillRect(v.x - 24, v.y - 48, 48, 5);
-            ctx.fillStyle =
-              v === p ? PAL.lime : pct > 0.6 ? "#7dff5a" : pct > 0.3 ? "#ffc83d" : PAL.red;
+            ctx.fillStyle = !v.bot
+              ? PAL.lime
+              : pct > 0.6
+                ? "#7dff5a"
+                : pct > 0.3
+                  ? "#ffc83d"
+                  : PAL.red;
             ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 5);
             ctx.fillStyle = "rgba(255,255,255,0.35)";
             ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 2);
           }
-          if (v === p) {
-            // yellow "YOU" tag above the player's car
+          if (!v.bot) {
+            // yellow "YOU" tag above the player's car (P1 / P2 in split screen)
             const tx = v.x,
               ty = v.y - 66;
             ctx.fillStyle = "#ffe23d";
@@ -1499,7 +1756,7 @@ function ArenaGame() {
             ctx.font = '9px "Press Start 2P", monospace';
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText("YOU", tx, ty + 1);
+            ctx.fillText(g.player2 ? (v === g.player2 ? "P2" : "P1") : "YOU", tx, ty + 1);
           }
         }
         for (const b of g.bullets)
@@ -1553,6 +1810,33 @@ function ArenaGame() {
       }
     };
 
+    /** the arena: one full-screen view, or two side-by-side views in 2-player split screen */
+    const renderArena = (t: number) => {
+      const g = gameRef.current;
+      const dtc = g ? Math.min(0.05, Math.max(0, t - (g.camT ?? t))) : 0;
+      if (g) g.camT = t;
+      if (!g?.player2) {
+        drawView(width, height, t, dtc, 0);
+        return;
+      }
+      const half = Math.floor(width / 2);
+      for (let i = 0; i < 2; i++) {
+        const w = i === 0 ? half : width - half;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(i * half, 0, w, height);
+        ctx.clip();
+        ctx.translate(i * half, 0);
+        drawView(w, height, t, dtc, i);
+        ctx.restore();
+      }
+      // neon divider between the two screens
+      ctx.fillStyle = "#0b0620";
+      ctx.fillRect(half - 4, 0, 8, height);
+      ctx.fillStyle = PAL.cyan;
+      ctx.fillRect(half - 1, 0, 2, height);
+    };
+
     const draw = (now: number) => {
       const dt = Math.min((now - previous) / 1000, 0.04);
       previous = now;
@@ -1567,8 +1851,20 @@ function ArenaGame() {
         /* SPEED mode renders on its own canvas */
       } else if (m === "result" && gameRef.current) renderArena(t);
       else {
-        stepShowroom(dt);
-        renderShowroom();
+        const two = twoPRef.current,
+          keys = keysRef.current;
+        stepShow(
+          showRef.current,
+          anchorRef.current,
+          anyKey(keys, two ? [" ", "testfire"] : [" ", "5", "testfire"]),
+          dt,
+        );
+        if (two)
+          stepShow(show2Ref.current, anchor2Ref.current, anyKey(keys, ["0", "testfire2"]), dt);
+        renderBackdrop(showRef.current.t);
+        renderShowroom(showRef.current, anchorRef.current);
+        if (two) renderShowroom(show2Ref.current, anchor2Ref.current);
+        fxRef.current.draw(ctx); // particles + bullets' sparks, once for both turntables
       }
       frame = requestAnimationFrame(draw);
     };
@@ -1596,10 +1892,14 @@ function ArenaGame() {
       "escape",
       "enter",
     ];
+    const p2Keys = [...P2_CTL.up, ...P2_CTL.down, ...P2_CTL.left, ...P2_CTL.right, ...P2_CTL.fire];
     const onKey = (e: KeyboardEvent, down: boolean) => {
-      const key = e.key.toLowerCase();
+      let key = e.key.toLowerCase();
+      const two = twoPRef.current;
+      // 2 players: the numpad always means its digits, whether or not NumLock is on
+      if (two && NUMPAD[e.code]) key = NUMPAD[e.code] as string;
+      if (drive.includes(key) || (two && p2Keys.includes(key))) e.preventDefault();
       if (down) sfxRef.current.unlock();
-      if (drive.includes(key)) e.preventDefault();
       if (down && !e.repeat) {
         const m = modeRef.current;
         if (key === "escape" && m === "playing") {
@@ -1608,24 +1908,30 @@ function ArenaGame() {
           setPaused(v);
         }
         if (m === "select" && pickingRef.current && teamPickRef.current) {
-          if (key === "b" || key === "1") {
-            setAsk(false);
-            startTdmRef.current(0);
-          } else if (key === "r" || key === "2") {
-            setAsk(false);
-            startTdmRef.current(1);
-          } else if (key === "escape") openTeamPick(false);
+          if (two) {
+            // each player picks their own team: P1 ← / → , P2 4 / 6
+            if (key === "arrowleft" || key === "a") chooseTeamRef.current(0, 0);
+            else if (key === "arrowright" || key === "d") chooseTeamRef.current(0, 1);
+            else if (key === "4") chooseTeamRef.current(1, 0);
+            else if (key === "6") chooseTeamRef.current(1, 1);
+            else if (key === "escape") openTeamPick(false);
+          } else if (key === "b" || key === "1") chooseTeamRef.current(0, 0);
+          else if (key === "r" || key === "2") chooseTeamRef.current(0, 1);
+          else if (key === "escape") openTeamPick(false);
         } else if (m === "select" && pickingRef.current) {
-          if (key === "t" || key === "3") openTeamPick(true);
-          else if (key === "enter" || key === "f" || key === "1") {
+          // number shortcuts are P2's keys in 2-player mode, so only letters pick a mode there
+          if (key === "t" || (!two && key === "3")) openTeamPick(true);
+          else if (key === "enter" || key === "f" || (!two && key === "1")) {
             setAsk(false);
             startRef.current();
-          } else if (key === "s" || key === "2") raceRef.current();
+          } else if (key === "s" || (!two && key === "2")) raceRef.current();
           else if (key === "escape") setAsk(false);
         } else if (m === "select") {
           if (key === "arrowleft" || key === "a") pick(selectedRef.current - 1);
           else if (key === "arrowright" || key === "d") pick(selectedRef.current + 1);
-          else if (key === "enter") askRef.current();
+          else if (two && key === "4") pick2Ref.current(selected2Ref.current - 1);
+          else if (two && key === "6") pick2Ref.current(selected2Ref.current + 1);
+          else if (key === "enter" || (two && key === "0")) askRef.current();
         }
       }
       if (down) keysRef.current.add(key);
@@ -1675,6 +1981,33 @@ function ArenaGame() {
     ["ARMOR", current.armor, current.armor, Shield],
   ];
   const toggleMute = () => setMuted((v) => !v);
+  /** small "2 PLAYER  ON/OFF" switch (top-right of the home screen and of each player's half) */
+  const twoToggle = () => (
+    <button
+      type="button"
+      className={`twop-toggle ${twoP ? "on" : ""}`}
+      role="switch"
+      aria-checked={twoP}
+      aria-label="2 player split screen"
+      onClick={() => setTwoP(!twoP)}
+    >
+      <Users size={12} /> 2 PLAYER <b>{twoP ? "ON" : "OFF"}</b>
+    </button>
+  );
+  const keyHint = (pi: number) =>
+    pi === 0 ? (
+      <>
+        <kbd>←</kbd>
+        <kbd>↑</kbd>
+        <kbd>↓</kbd>
+        <kbd>→</kbd> DRIVE · <kbd>SPACE</kbd> FIRE
+      </>
+    ) : (
+      <>
+        <kbd>8</kbd> UP · <kbd>2</kbd> DOWN · <kbd>4</kbd> LEFT · <kbd>6</kbd> RIGHT · <kbd>0</kbd>{" "}
+        FIRE
+      </>
+    );
   const togglePause = () => {
     const v = !pausedRef.current;
     pausedRef.current = v;
@@ -1694,6 +2027,7 @@ function ArenaGame() {
               <span className="logo-b">STANDING</span>
             </div>
             <div className="top-right">
+              {mode === "select" && !twoP && twoToggle()}
               <span className="credit">
                 CREDIT <b>01</b>
               </span>
@@ -1710,7 +2044,145 @@ function ArenaGame() {
           </header>
         )}
 
-        {mode === "select" && (
+        {mode === "select" && twoP && (
+          <div className="garage two">
+            {[0, 1].map((pi) => {
+              const idx = pi ? selected2 : selected;
+              const car = carAt(idx);
+              const o = rating(car);
+              const choose = pi ? pick2 : pick;
+              return (
+                <section
+                  className={`garage-half half-${pi}`}
+                  key={pi}
+                  style={{ "--c": car.color } as CSSProperties}
+                  aria-label={`Player ${pi + 1} garage`}
+                >
+                  <div className="half-head">
+                    <span className="half-tag">PLAYER {pi + 1}</span>
+                    {twoToggle()}
+                  </div>
+                  <div
+                    className="win spec-panel compact"
+                    style={{ "--c": car.color } as CSSProperties}
+                  >
+                    <div className="win-body">
+                      <div className="name-row">
+                        <h2 className="car-name">{car.name}</h2>
+                        <span className="rank-badge">{rank(o)}</span>
+                      </div>
+                      <div className="stat-list">
+                        {(
+                          [
+                            ["HP", car.hp, (car.hp / 160) * 100],
+                            ["SPD", car.speed, car.speed],
+                            ["FIRE", car.fireRate, car.fireRate],
+                            ["DMG", car.damage, car.damage],
+                            ["ARM", car.armor, car.armor],
+                          ] as [string, number, number][]
+                        ).map(([label, value, pct]) => (
+                          <div className="stat-row" key={label}>
+                            <span className="stat-label">{label}</span>
+                            <span className="segs" aria-hidden="true">
+                              {Array.from({ length: 10 }, (_, n) => (
+                                <i key={n} className={n < Math.round(pct / 10) ? "on" : ""} />
+                              ))}
+                            </span>
+                            <span className="stat-num">{String(value).padStart(3, "0")}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="showcase" ref={pi ? anchor2Ref : anchorRef}>
+                    <button
+                      type="button"
+                      className="nav-arrow nav-left"
+                      onClick={() => choose(idx - 1)}
+                      aria-label={`Player ${pi + 1} previous car`}
+                    >
+                      <ChevronLeft size={26} />
+                    </button>
+                    <button
+                      type="button"
+                      className="nav-arrow nav-right"
+                      onClick={() => choose(idx + 1)}
+                      aria-label={`Player ${pi + 1} next car`}
+                    >
+                      <ChevronRight size={26} />
+                    </button>
+                    <span className="showcase-count">
+                      {String(idx + 1).padStart(2, "0")} / {String(cars.length).padStart(2, "0")}
+                    </span>
+                  </div>
+                  <div className="half-actions">
+                    <button
+                      type="button"
+                      className="arcade-btn start-btn"
+                      onClick={() => askRef.current()}
+                    >
+                      <Play size={16} /> START <small>{pi ? "0" : "ENTER"}</small>
+                    </button>
+                    <button
+                      type="button"
+                      className="arcade-btn alt-btn"
+                      {...hold(pi ? "testfire2" : "testfire")}
+                    >
+                      <Crosshair size={14} /> TEST FIRE
+                    </button>
+                  </div>
+                  <p className="half-keys">
+                    {pi === 0 ? (
+                      <>
+                        <kbd>←</kbd>
+                        <kbd>→</kbd> CHANGE CAR · <kbd>SPACE</kbd> TEST FIRE
+                      </>
+                    ) : (
+                      <>
+                        <kbd>4</kbd>
+                        <kbd>6</kbd> CHANGE CAR · <kbd>0</kbd> TEST FIRE
+                      </>
+                    )}
+                  </p>
+                  <div className="win garage-strip" aria-label={`Player ${pi + 1} car list`}>
+                    <div className="tiles" role="listbox">
+                      {cars.map((c, i) => (
+                        <button
+                          key={c.name}
+                          type="button"
+                          role="option"
+                          aria-selected={idx === i}
+                          className={`tile ${idx === i ? "tile-active" : ""}`}
+                          style={{ "--c": c.color } as CSSProperties}
+                          onClick={() => choose(i)}
+                          aria-label={`Player ${pi + 1} select ${c.name}`}
+                        >
+                          <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
+                          {idx === i && <span className="tile-flag">P{pi + 1}</span>}
+                          <span className="tile-art">
+                            {broken[i] ? (
+                              <span className="tile-swatch" />
+                            ) : (
+                              <img
+                                src={c.url}
+                                alt=""
+                                loading="eager"
+                                onError={() => setBroken((b) => ({ ...b, [i]: true }))}
+                              />
+                            )}
+                          </span>
+                          <span className="tile-name">{c.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+
+        {mode === "select" && !twoP && (
           <div className="garage">
             <div className="garage-main">
               <section className="win spec-panel" aria-live="polite">
@@ -1836,7 +2308,53 @@ function ArenaGame() {
           </div>
         )}
 
-        {mode === "select" && picking && teamPick && (
+        {mode === "select" && picking && teamPick && twoP && (
+          <div className="overlay" onClick={() => setAsk(false)}>
+            <div
+              className="win overlay-box mode-pick two-pick"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="win-title">
+                <span>TDM · EACH PLAYER PICKS A TEAM</span>
+              </div>
+              <div className="win-body center">
+                <div className="team-cols">
+                  {[0, 1].map((pi) => (
+                    <div className="team-col" key={pi}>
+                      <b className="team-who">PLAYER {pi + 1}</b>
+                      <button
+                        type="button"
+                        className={`arcade-btn start-btn team-blue-btn ${teams[pi] === 0 ? "picked" : ""}`}
+                        onClick={() => chooseTeam(pi, 0)}
+                      >
+                        <Shield size={16} /> BLUE <small>{pi ? "4" : "←"}</small>
+                      </button>
+                      <button
+                        type="button"
+                        className={`arcade-btn start-btn team-red-btn ${teams[pi] === 1 ? "picked" : ""}`}
+                        onClick={() => chooseTeam(pi, 1)}
+                      >
+                        <Shield size={16} /> RED <small>{pi ? "6" : "→"}</small>
+                      </button>
+                      <span className="team-state">
+                        {(teams[pi] ?? -1) < 0 ? "WAITING…" : teams[pi] === 0 ? "BLUE ✓" : "RED ✓"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="arcade-btn alt-btn"
+                  onClick={() => openTeamPick(false)}
+                >
+                  BACK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "select" && picking && teamPick && !twoP && (
           <div className="overlay" onClick={() => setAsk(false)}>
             <div className="win overlay-box mode-pick" onClick={(e) => e.stopPropagation()}>
               <div className="win-title">
@@ -1846,20 +2364,14 @@ function ArenaGame() {
                 <button
                   type="button"
                   className="arcade-btn start-btn team-blue-btn"
-                  onClick={() => {
-                    setAsk(false);
-                    startTdmRef.current(0);
-                  }}
+                  onClick={() => chooseTeam(0, 0)}
                 >
                   <Shield size={18} /> BLUE TEAM <small>SPAWN ON THE LEFT · B</small>
                 </button>
                 <button
                   type="button"
                   className="arcade-btn start-btn team-red-btn"
-                  onClick={() => {
-                    setAsk(false);
-                    startTdmRef.current(1);
-                  }}
+                  onClick={() => chooseTeam(0, 1)}
                 >
                   <Shield size={18} /> RED TEAM <small>SPAWN ON THE RIGHT · R</small>
                 </button>
@@ -1879,7 +2391,7 @@ function ArenaGame() {
           <div className="overlay" onClick={() => setAsk(false)}>
             <div className="win overlay-box mode-pick" onClick={(e) => e.stopPropagation()}>
               <div className="win-title">
-                <span>SELECT MODE</span>
+                <span>SELECT MODE{twoP ? " · BOTH PLAYERS JOIN" : ""}</span>
               </div>
               <div className="win-body center">
                 <button
@@ -1917,6 +2429,9 @@ function ArenaGame() {
         {mode === "race" && (
           <RaceMode
             carIndex={selected}
+            carIndex2={selected2}
+            twoP={twoP}
+            onSetTwoP={setTwoP}
             keys={keysRef}
             sfx={sfxRef.current}
             muted={muted}
@@ -1925,7 +2440,122 @@ function ArenaGame() {
           />
         )}
 
-        {mode === "playing" && (
+        {mode === "playing" && twoP && (
+          <>
+            <div className="tp-top">
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={toggleMute}
+                aria-label={muted ? "Unmute sound" : "Mute sound"}
+              >
+                {muted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+              </button>
+              {hud.tdm ? (
+                <div className="tp-score" aria-label="Team score">
+                  <b className="tdm-score tdm-blue">{hud.tdm.blue}</b>
+                  <span className="tdm-time">{fmtTime(hud.tdm.left)}</span>
+                  <b className="tdm-score tdm-red">{hud.tdm.red}</b>
+                </div>
+              ) : (
+                <div className="hud-timer tp-timer">{fmtTime(hud.time)}</div>
+              )}
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={togglePause}
+                aria-label={paused ? "Resume" : "Pause"}
+              >
+                {paused ? <Play size={14} /> : "II"}
+              </button>
+            </div>
+            {[0, 1].map((pi) => {
+              const idx = pi ? selected2 : selected;
+              const car = carAt(idx);
+              const hp = pi ? (hud.hp2 ?? 0) : hud.hp;
+              const kills = pi ? (hud.kills2 ?? 0) : hud.kills;
+              const team = hud.tdm ? (pi ? (hud.tdm.team2 ?? hud.tdm.team) : hud.tdm.team) : -1;
+              const resp = hud.tdm ? (pi ? (hud.tdm.respawn2 ?? 0) : hud.tdm.respawn) : 0;
+              return (
+                <div className={`tp-pane pane-${pi}`} key={pi}>
+                  <div className="tp-head">
+                    <span className="tp-who">
+                      PLAYER {pi + 1}
+                      {team >= 0 && (
+                        <em style={{ color: TEAM_COL[team] }}> · {team === 0 ? "BLUE" : "RED"}</em>
+                      )}
+                    </span>
+                    {twoToggle()}
+                  </div>
+                  {resp > 0 && !paused && (
+                    <div className="tp-respawn" role="status">
+                      <span>ELIMINATED · RESPAWNING</span>
+                      <b key={resp}>{resp}</b>
+                    </div>
+                  )}
+                  {!hud.tdm && hp <= 0 && !paused && (
+                    <div className="tp-respawn" role="status">
+                      <span>WRECKED · WATCHING</span>
+                    </div>
+                  )}
+                  <div className="tp-foot">
+                    <div className="win tp-vitals">
+                      <div className="vital-head">
+                        <span>
+                          <Heart size={12} /> {car.name.toUpperCase()}
+                        </span>
+                        <b>
+                          {hp}
+                          <small> HP</small>
+                        </b>
+                      </div>
+                      <div className="vital-track">
+                        <span style={{ width: `${clamp((hp / car.hp) * 100, 0, 100)}%` }} />
+                      </div>
+                      <div className="tp-meta">
+                        {String(kills).padStart(2, "0")} KILLS
+                        {!hud.tdm && ` · ${String(hud.alive).padStart(2, "0")}/${TOTAL} ALIVE`}
+                      </div>
+                    </div>
+                    <p className="tp-keys">{keyHint(pi)}</p>
+                  </div>
+                </div>
+              );
+            })}
+            {paused && (
+              <div className="overlay">
+                <div className="win overlay-box">
+                  <div className="win-title">
+                    <span>PAUSED</span>
+                  </div>
+                  <div className="win-body center">
+                    <h2 className="big-title">
+                      MATCH
+                      <br />
+                      <em>PAUSED</em>
+                    </h2>
+                    <button type="button" className="arcade-btn start-btn" onClick={togglePause}>
+                      <Play size={16} /> RESUME
+                    </button>
+                    <button
+                      type="button"
+                      className="arcade-btn alt-btn"
+                      onClick={() => {
+                        pausedRef.current = false;
+                        setPaused(false);
+                        setModeSync("select");
+                      }}
+                    >
+                      ABANDON MATCH
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {mode === "playing" && !twoP && (
           <>
             <div className="hud-top">
               <div className="hud-brand">
@@ -2135,7 +2765,100 @@ function ArenaGame() {
           </>
         )}
 
-        {mode === "result" && (
+        {mode === "result" && result.two && (
+          <div className="overlay">
+            <div className="win overlay-box two-result">
+              <div className="win-title">
+                <span>
+                  <Trophy size={13} /> MATCH COMPLETE
+                </span>
+              </div>
+              <div className="win-body center">
+                <h1 className="big-title">
+                  {result.two.winner === 1 || result.two.winner === 2 ? (
+                    <>
+                      PLAYER {result.two.winner}
+                      <br />
+                      <em>WINS!</em>
+                    </>
+                  ) : result.tdm ? (
+                    result.tdm.draw ? (
+                      <>
+                        MATCH
+                        <br />
+                        <em>DRAW!</em>
+                      </>
+                    ) : result.two.p1.won ? (
+                      <>
+                        TEAM
+                        <br />
+                        <em>VICTORY!</em>
+                      </>
+                    ) : (
+                      <>
+                        TEAM
+                        <br />
+                        <em>DEFEAT</em>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      GAME
+                      <br />
+                      <em>OVER</em>
+                    </>
+                  )}
+                </h1>
+                {result.tdm && (
+                  <p className="result-sub">{`BLUE ${result.tdm.blue} - ${result.tdm.red} RED`}</p>
+                )}
+                <div className="two-cols">
+                  {([result.two.p1, result.two.p2] as const).map((r, i) => (
+                    <div className={`two-col ${r.won ? "won" : ""}`} key={i}>
+                      <b className="team-who">PLAYER {i + 1}</b>
+                      <div className="result-stats one">
+                        <div>
+                          <span>{result.tdm ? "TEAM" : "POSITION"}</span>
+                          <b>
+                            {result.tdm
+                              ? (i ? (result.tdm.team2 ?? result.tdm.team) : result.tdm.team) === 0
+                                ? "BLUE"
+                                : "RED"
+                              : `#${String(r.pos).padStart(2, "0")}`}
+                          </b>
+                        </div>
+                        <div>
+                          <span>KILLS</span>
+                          <b>{String(r.kills).padStart(2, "0")}</b>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className="arcade-btn start-btn"
+                  onClick={() =>
+                    result.tdm
+                      ? startTdmRef.current(result.tdm.team, result.tdm.team2)
+                      : startRef.current()
+                  }
+                >
+                  <Play size={16} /> PLAY AGAIN
+                </button>
+                <button
+                  type="button"
+                  className="arcade-btn alt-btn"
+                  onClick={() => setModeSync("select")}
+                >
+                  BACK TO GARAGE
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {mode === "result" && !result.two && (
           <div className="overlay">
             <div className="win overlay-box">
               <div className="win-title">

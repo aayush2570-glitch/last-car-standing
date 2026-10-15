@@ -832,8 +832,26 @@ export class RaceView {
   private lines: { x: number; y: number; s: number }[] = [];
   private lastNow = 0;
 
-  constructor(pick: number) {
-    this.race = new Race(pick);
+  /** `seed` builds the same track (obstacles, pickups, grid slot) every time — used so both
+   *  players of the 2-player split screen race on an identical road. */
+  constructor(pick: number, seed?: number) {
+    if (seed === undefined) this.race = new Race(pick);
+    else {
+      const real = Math.random;
+      let a = seed >>> 0;
+      Math.random = () => {
+        a = (a + 0x6d2b79f5) >>> 0;
+        let t = a;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      try {
+        this.race = new Race(pick);
+      } finally {
+        Math.random = real;
+      }
+    }
     this.camX = this.race.me.x;
   }
 

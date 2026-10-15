@@ -352,3 +352,86 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
   .hud-tdm { top: 52px; }
 }
 @media (prefers-reduced-motion: reduce) { .respawn-banner b { animation: none; } }
+
+/* ───────── 2-PLAYER SPLIT SCREEN ───────── */
+.twop-toggle { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; color: #a99ee0; background: #1a0f45; border: 3px solid #4a2ea8; box-shadow: 3px 3px 0 #000; cursor: pointer; font: 8px/1 "Press Start 2P", monospace; letter-spacing: .04em; white-space: nowrap; pointer-events: auto; }
+.twop-toggle b { padding: 3px 5px; font-weight: normal; color: #fff; background: #4a2ea8; border: 2px solid #000; }
+.twop-toggle.on { color: #0b0620; background: #2ef2ff; border-color: #fff; }
+.twop-toggle.on b { color: #0b0620; background: #3dff7a; }
+.twop-toggle:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 #000; }
+.twop-toggle:focus-visible { outline: 3px dashed #2ef2ff; outline-offset: 3px; }
+
+/* garage: two halves, one per player */
+.garage.two { flex-direction: row; gap: 0; padding: 84px 0 0; }
+.garage.two > .garage-half { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 0 14px 10px; }
+.garage.two > .half-0 { border-right: 3px solid #2ef2ff; box-shadow: 4px 0 18px rgba(46,242,255,.25); }
+.half-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.half-tag { padding: 6px 10px; font: 11px/1 "Press Start 2P", monospace; color: #0b0620; background: #2ef2ff; border: 3px solid #000; box-shadow: 3px 3px 0 #000; }
+.half-1 .half-tag { background: #3dff7a; }
+.garage-half .spec-panel.compact { align-self: stretch; }
+.garage-half .spec-panel .win-body { padding: 8px 12px; }
+.garage-half .car-name { font-size: clamp(11px, 1.3vw, 16px); }
+.garage-half .stat-list { gap: 4px; margin-top: 8px; }
+.garage-half .stat-row { grid-template-columns: 44px 1fr 30px; }
+.garage-half .segs i { height: 9px; }
+.garage-half .rank-badge { width: 30px; height: 30px; font-size: 14px; }
+.garage-half .showcase { flex: 1; min-height: 150px; }
+.half-actions { display: flex; gap: 10px; }
+.half-actions .arcade-btn { padding: 9px 8px 8px; font-size: 9px; }
+.half-keys { margin: 0; text-align: center; font: 17px/1.1 "VT323", monospace; color: #a99ee0; letter-spacing: .06em; }
+.garage-half .garage-strip .tiles { padding: 8px; gap: 8px; }
+.garage-half .tile { flex: 0 0 82px; padding-top: 16px; }
+.garage-half .tile-art { height: 54px; }
+.garage-half .tile-art img { max-height: 52px; }
+
+/* in-game: one HUD layer per half */
+.tp-top { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; }
+.tp-score { display: flex; align-items: center; border: 3px solid #000; background: rgba(11,6,32,.88); box-shadow: 0 0 0 2px #3a2478; }
+.tp-timer { padding: 6px 10px; font-size: 16px; background: rgba(11,6,32,.88); border: 3px solid #000; }
+.tp-pane { position: absolute; top: 0; bottom: 0; width: 50%; z-index: 25; display: flex; flex-direction: column; justify-content: space-between; padding: 54px 10px 8px; pointer-events: none; }
+.tp-pane.pane-0 { left: 0; }
+.tp-pane.pane-1 { left: 50%; }
+.tp-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.tp-who { padding: 5px 9px; font: 10px/1 "Press Start 2P", monospace; color: #fff; background: rgba(11,6,32,.85); border: 3px solid #000; text-shadow: 2px 2px 0 #000; }
+.pane-0 .tp-who { color: #2ef2ff; }
+.pane-1 .tp-who { color: #3dff7a; }
+.tp-who em { font-style: normal; }
+.tp-foot { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.tp-vitals { width: min(230px, 100%); padding: 7px 10px; }
+.tp-vitals .vital-track { height: 12px; margin: 5px 0; }
+.tp-meta { font: 16px/1 "VT323", monospace; color: #ff2bd6; letter-spacing: .08em; }
+.tp-keys { margin: 0; font: 15px/1.2 "VT323", monospace; letter-spacing: .06em; color: #d9d0ff; text-shadow: 2px 2px 0 #000; }
+.tp-keys kbd { min-width: 16px; padding: 1px 4px; font-size: 9px; }
+.tp-respawn { position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px 16px; background: rgba(11,6,32,.85); border: 3px solid #ff2bd6; text-align: center; }
+.tp-respawn span { font: 9px/1.4 "Press Start 2P", monospace; color: #fff; }
+.tp-respawn small { font: 17px/1 "VT323", monospace; color: #a99ee0; letter-spacing: .1em; }
+.tp-respawn b { font: 40px/1 "Press Start 2P", monospace; color: #ffe23d; text-shadow: 3px 3px 0 #ff2bd6, 5px 5px 0 #000; animation: respawn-pop .9s ease-out; }
+
+/* team picker + result card with two columns */
+.overlay-box.two-pick, .overlay-box.two-result { width: min(620px, 100%); }
+.team-cols, .two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; }
+.team-col, .two-col { display: flex; flex-direction: column; align-items: stretch; gap: 10px; padding: 10px; background: #120a30; border: 3px solid #3a2478; }
+.two-col.won { border-color: #ffe23d; box-shadow: 0 0 14px rgba(255,226,61,.45); }
+.team-who { font: 9px/1 "Press Start 2P", monospace; color: #2ef2ff; text-align: center; }
+.team-col:nth-child(2) .team-who, .two-col:nth-child(2) .team-who { color: #3dff7a; }
+.team-state { font: 18px/1 "VT323", monospace; color: #ffe23d; letter-spacing: .1em; text-align: center; }
+.team-col .arcade-btn { font-size: 9px; padding: 10px 6px 9px; animation: none; }
+.team-col .arcade-btn.picked { outline: 4px solid #ffe23d; outline-offset: 2px; }
+.result-stats.one { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); }
+
+/* SPEED mode split screen */
+.race-root.two .race-c1 { width: 50%; }
+.race-root.two .race-c2 { left: 50%; width: 50%; }
+.race-divider { position: absolute; left: calc(50% - 4px); top: 0; bottom: 0; width: 8px; z-index: 35; background: #0b0620; border-left: 3px solid #2ef2ff; border-right: 3px solid #3dff7a; pointer-events: none; }
+.race-root.two .race-top { left: 50%; right: auto; transform: translateX(-50%); top: 8px; }
+.race-root .tp-pane { z-index: 40; }
+
+@media (max-width: 980px) {
+  .garage.two { flex-direction: column; padding-top: 84px; }
+  .garage.two > .half-0 { border-right: 0; border-bottom: 3px solid #2ef2ff; }
+}
+@media (max-width: 640px) {
+  .twop-toggle { font-size: 7px; padding: 0 6px; }
+  .tp-keys { font-size: 13px; }
+  .tp-vitals { width: 170px; }
+}
