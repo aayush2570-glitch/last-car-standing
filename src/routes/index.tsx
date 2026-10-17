@@ -753,7 +753,7 @@ function ArenaGame() {
 
   const finishMatch = useCallback(
     (won: boolean, position: number, tdm?: Tdm, kills = 0, two?: TwoRes) => {
-      let xp = 100 + kills * 30; // FFA: 100 per match + 30 per kill
+      let xp = 100 + kills * 100; // FFA: 100 per match + 100 per kill
       let res:
         { blue: number; red: number; team: number; draw: boolean; team2?: number } | undefined;
       if (tdm) {
