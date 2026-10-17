@@ -6,6 +6,9 @@ import policeCar from "@/assets/cars/police_car.webp";
 import purpleCar from "@/assets/cars/purple_futuristic_car.webp";
 import redMuscleCar from "@/assets/cars/red_muscle_car.webp";
 import yellowTruck from "@/assets/cars/yellow_turret_truck.webp";
+import redlineV2 from "@/assets/cars/redline_v2.webp";
+import phantomV2 from "@/assets/cars/phantom_v2.webp";
+import blueTurretV2 from "@/assets/cars/blue_turret_v2.webp";
 
 /**
  * NOTE (Chrome 109): every colour used by the canvas or by inline styles is a plain
@@ -49,7 +52,60 @@ export type Car = {
   /** sprite size used in the arena (px); width follows the artwork's real aspect ratio */
   w: number;
   h: number;
+  /** v2 forms only: index (in `cars`) of the car this is the upgraded form of */
+  base?: number;
+  /** v2 forms only: XP price in the garage */
+  price?: number;
+  /** v2 forms only: special power */
+  ability?: AbilityKind;
 };
+
+export type AbilityKind = "freeze" | "ghost" | "shield";
+
+export type AbilityInfo = {
+  kind: AbilityKind;
+  label: string;
+  /** correct hits needed to charge it */
+  need: number;
+  /** seconds the power lasts */
+  dur: number;
+  color: string;
+  blurb: string;
+};
+
+export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
+  freeze: {
+    kind: "freeze",
+    label: "TIME FREEZE",
+    need: 10,
+    dur: 5,
+    color: "#7df3ff",
+    blurb: "10 hits: freezes nearby cars and bullets for 5s",
+  },
+  ghost: {
+    kind: "ghost",
+    label: "PHANTOM CLOAK",
+    need: 20,
+    dur: 30,
+    color: "#d08cff",
+    blurb: "20 hits: invisible to others for 30s, still hittable",
+  },
+  shield: {
+    kind: "shield",
+    label: "AEGIS SHIELD",
+    need: 20,
+    dur: 30,
+    color: "#ff5a5a",
+    blurb: "20 hits: shield for 30s, blocks 75% of hits",
+  },
+};
+
+/** radius (px) of the Time Freeze field around the car */
+export const FREEZE_RADIUS = 380;
+/** chance a shielded car still takes a hit */
+export const SHIELD_LEAK = 0.25;
+/** chance a bot rolls the v2 form of a car that has one */
+export const BOT_V2_CHANCE = 0.05;
 
 export const cars: Car[] = [
   {
@@ -158,14 +214,88 @@ export const cars: Car[] = [
   },
 ];
 
+/** Upgraded "v2" forms. Ids continue after the base cars (8, 9, 10). */
+export const v2Cars: Car[] = [
+  {
+    name: "Redline v2",
+    model: "AEGIS PROTOCOL",
+    url: redlineV2,
+    hp: 150,
+    speed: 76,
+    fireRate: 68,
+    damage: 92,
+    armor: 84,
+    color: "#ff4b5c",
+    w: 46,
+    h: 80,
+    base: 6,
+    price: 40000,
+    ability: "shield",
+  },
+  {
+    name: "Phantom v2",
+    model: "GHOST CLOAK",
+    url: phantomV2,
+    hp: 104,
+    speed: 96,
+    fireRate: 90,
+    damage: 68,
+    armor: 55,
+    color: "#c26bff",
+    w: 50,
+    h: 80,
+    base: 5,
+    price: 50000,
+    ability: "ghost",
+  },
+  {
+    name: "Blue Turret v2",
+    model: "CHRONO SUPPORT",
+    url: blueTurretV2,
+    hp: 160,
+    speed: 54,
+    fireRate: 60,
+    damage: 76,
+    armor: 96,
+    color: "#4dd8ff",
+    w: 45,
+    h: 80,
+    base: 1,
+    price: 70000,
+    ability: "freeze",
+  },
+];
+
+/** every drivable car: base forms first, then the v2 forms */
+export const allCars: Car[] = [...cars, ...v2Cars];
+
+/** id of the v2 form of a base car, or -1 when it has none */
+export const v2Of = (base: number): number => {
+  const i = v2Cars.findIndex((c) => c.base === base);
+  return i < 0 ? -1 : cars.length + i;
+};
+export const isV2 = (id: number): boolean => id >= cars.length;
+/** base car index for any car id (v1 ids map to themselves) */
+export const baseOf = (id: number): number =>
+  isV2(id) ? ((v2Cars[id - cars.length] as Car).base as number) : id;
+/** v1 → maybe v2 (used for bots, which now and then show up with an upgraded car) */
+export const rollV2 = (id: number): number => {
+  const v = v2Of(id);
+  return v >= 0 && Math.random() < BOT_V2_CHANCE ? v : id;
+};
+export const abilityOf = (id: number): AbilityInfo | null => {
+  const a = allCars[id]?.ability;
+  return a ? ABILITIES[a] : null;
+};
+
 export const carAt = (i: number): Car =>
-  cars[((i % cars.length) + cars.length) % cars.length] as Car;
+  allCars[((i % allCars.length) + allCars.length) % allCars.length] as Car;
 
 /** Lazily created, client-only sprite cache. */
 let sprites: HTMLImageElement[] | null = null;
 export function getSprites(): HTMLImageElement[] {
   if (sprites) return sprites;
-  sprites = cars.map((c) => {
+  sprites = allCars.map((c) => {
     const img = new Image();
     img.src = c.url;
     return img;

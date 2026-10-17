@@ -14,8 +14,26 @@ import {
   Gauge,
   Swords,
   Users,
+  Lock,
+  ShoppingCart,
 } from "lucide-react";
-import { PAL, cars, carAt, drawFallbackCar, getSprites, spriteReady, type Car } from "@/game/cars";
+import {
+  PAL,
+  cars,
+  carAt,
+  drawFallbackCar,
+  getSprites,
+  spriteReady,
+  type Car,
+  FREEZE_RADIUS,
+  SHIELD_LEAK,
+  abilityOf,
+  baseOf,
+  isV2,
+  rollV2,
+  v2Of,
+} from "@/game/cars";
+import { addXp, buyCar, useWallet } from "@/game/xp";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
 import { RaceMode } from "@/game/RaceMode";
 
@@ -88,6 +106,11 @@ type Vehicle = {
   /* 2-player split screen: 0 = player 1, 1 = player 2 (undefined for bots) */
   pi?: number;
   deadPos?: number;
+  /* v2 abilities: hits landed toward the next charge, seconds the power has left, frozen this frame, shield-block flash */
+  charge?: number;
+  abT?: number;
+  frz?: boolean;
+  blk?: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -99,6 +122,7 @@ type Projectile = {
   owner: Vehicle;
   life: number;
   damage: number;
+  frz?: boolean;
 };
 type Dot = { x: number; y: number; me: boolean; team?: number | undefined };
 type Tdm = {
@@ -258,6 +282,10 @@ const NUMPAD: Record<string, string> = {
   Numpad9: "9",
 };
 const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
+/** is this car's v2 power (of the given kind) running right now? */
+const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "shield") =>
+  (v.abT ?? 0) > 0 && abilityOf(v.carId)?.kind === kind;
+const fmtXp = (n: number) => n.toLocaleString("en-US");
 const P1_COLOR = "56,160,255";
 const P2_COLOR = "61,255,122";
 
@@ -346,6 +374,15 @@ function twoResult(g: Game): TwoRes {
 
 function ArenaGame() {
   const [selected, setSelected] = useState(0);
+  const wallet = useWallet();
+  const [notice, setNotice] = useState("");
+  const noticeT = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const say = useCallback((m: string) => {
+    setNotice(m);
+    if (noticeT.current) clearTimeout(noticeT.current);
+    noticeT.current = setTimeout(() => setNotice(""), 2600);
+  }, []);
+  const lockedId = (id: number) => isV2(id) && !wallet.has(id);
   const [mode, setMode] = useState<"select" | "playing" | "result" | "race">("select");
   const [hud, setHud] = useState<{
     hp: number;
@@ -474,7 +511,7 @@ function ArenaGame() {
         x = 220 + i * 175;
         y = i % 2 ? 340 : 1370;
       }
-      const id = (i + idx + 1) % cars.length;
+      const id = rollV2((i + baseOf(idx) + 1) % cars.length);
       rivals.push({
         x,
         y,
@@ -544,7 +581,7 @@ function ArenaGame() {
       ): Vehicle => {
         const sp = TDM_SPAWN[tm] as { x: number; y: number };
         const a = ((slot - 1) / 5) * Math.PI * 2;
-        const id = isPlayer ? carId : (k++ + idx + 1) % cars.length;
+        const id = isPlayer ? carId : rollV2((k++ + baseOf(idx) + 1) % cars.length);
         return {
           x: sp.x + (slot ? Math.cos(a) * 105 : 0),
           y: sp.y + (slot ? Math.sin(a) * 105 : 0),
@@ -667,7 +704,7 @@ function ArenaGame() {
       keysRef.current.clear();
       sfxRef.current.blip();
       if (on) {
-        const next = (selectedRef.current + 1) % cars.length;
+        const next = (baseOf(selectedRef.current) + 1) % cars.length;
         selected2Ref.current = next;
         setSelected2(next);
         return;
@@ -692,6 +729,18 @@ function ArenaGame() {
     [setHud],
   );
   askRef.current = () => {
+    const bad = lockedId(selectedRef.current)
+      ? 1
+      : twoPRef.current && lockedId(selected2Ref.current)
+        ? 2
+        : 0;
+    if (bad) {
+      const c = carAt(bad === 2 ? selected2Ref.current : selectedRef.current);
+      say(
+        `${twoPRef.current ? `PLAYER ${bad}: ` : ""}BUY ${c.name.toUpperCase()} FIRST (${fmtXp(c.price ?? 0)} XP)`,
+      );
+      return;
+    }
     setAsk(true);
     sfxRef.current.blip();
   };
@@ -717,6 +766,7 @@ function ArenaGame() {
         };
         xp = (tdm.draw ? 300 : won ? 750 : 200) + kills * 30;
       }
+      addXp(xp);
       setResult({ won, position, xp, tdm: res, two });
       setModeSync("result");
     },
@@ -731,6 +781,26 @@ function ArenaGame() {
     setSelected2(((i % cars.length) + cars.length) % cars.length);
     sfxRef.current.blip();
   }, []);
+  /** V1 / V2 switch of the highlighted car (previewing V2 is free, driving it needs to be bought) */
+  const setVer = useCallback((pi: number, v2: boolean) => {
+    const cur = pi ? selected2Ref.current : selectedRef.current;
+    const b = baseOf(cur);
+    const id = v2 && v2Of(b) >= 0 ? v2Of(b) : b;
+    if (pi) setSelected2(id);
+    else setSelected(id);
+    sfxRef.current.blip();
+  }, []);
+  const setVerRef = useRef(setVer);
+  setVerRef.current = setVer;
+  const buy = (id: number) => {
+    const c = carAt(id);
+    const price = c.price ?? 0;
+    if (wallet.has(id)) return;
+    if (buyCar(id, price)) {
+      sfxRef.current.blip();
+      say(`${c.name.toUpperCase()} UNLOCKED!`);
+    } else say(`NEED ${fmtXp(Math.max(0, price - wallet.xp))} MORE XP`);
+  };
   const pick2Ref = useRef(pick2);
   pick2Ref.current = pick2;
   const chooseTeamRef = useRef(chooseTeam);
@@ -1021,6 +1091,31 @@ function ArenaGame() {
       const p = g.player;
       const humans = g.player2 ? [p, g.player2] : [p];
       const tdm = g.tdm;
+      /* Time Freeze fields: cars and bullets inside an enemy's field stand still (the owner's own bullets don't) */
+      const zones = g.cars.filter((z) => z.alive && powerOn(z, "freeze"));
+      const frozenAt = (x: number, y: number, who: Vehicle) =>
+        zones.some(
+          (z) =>
+            z !== who &&
+            (!tdm || z.team !== who.team) &&
+            Math.hypot(x - z.x, y - z.y) < FREEZE_RADIUS,
+        );
+      for (const v of g.cars) v.frz = v.alive && zones.length > 0 && frozenAt(v.x, v.y, v);
+      /* every bullet that lands on an enemy charges the shooter's v2 power; a full charge fires it at once */
+      const chargeUp = (o: Vehicle) => {
+        const ab = abilityOf(o.carId);
+        if (!ab || !o.alive || (o.abT ?? 0) > 0) return;
+        o.charge = (o.charge ?? 0) + 1;
+        if (o.charge >= ab.need) {
+          o.charge = 0;
+          o.abT = ab.dur;
+          fx.impact(o.x, o.y, 0, ab.color, 26);
+          if (!o.bot) {
+            sfx.blip();
+            fx.shake = Math.max(fx.shake, 5);
+          }
+        }
+      };
       /* TDM: match clock, team respawns (5-4-3-2-1 on your own base) and the final whistle */
       if (tdm && !g.over) {
         tdm.time += dt;
@@ -1061,6 +1156,8 @@ function ArenaGame() {
           v.stuckT = 0;
           v.unstick = 0;
           v.inv = 2;
+          v.charge = 0;
+          v.abT = 0;
           fx.impact(x, y, 0, TEAM_COL[v.team === 1 ? 1 : 0] as string, 14);
           if (v === p) {
             g.cam = { x, y };
@@ -1094,7 +1191,7 @@ function ArenaGame() {
       }
       /* human drivers: player 1 on the arrow keys, player 2 on 8 / 2 / 4 / 6 and 0 to fire */
       const drive = (h: Vehicle, ctl: Ctl) => {
-        if (!h.alive || g.over) return;
+        if (!h.alive || g.over || h.frz) return;
         const stats = carAt(h.carId);
         const forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
         const side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
@@ -1166,6 +1263,7 @@ function ArenaGame() {
       for (const bot of g.cars) {
         if (!bot.bot || !bot.alive) continue;
         bot.cooldown -= dt;
+        if (bot.frz) continue; // time is stopped around this bot
         const me = carAt(bot.carId);
         const hpFrac = bot.hp / me.hp;
         /* TDM rubber-band: the team that is behind plays a bit sharper, the leaders a bit sloppier,
@@ -1180,6 +1278,7 @@ function ArenaGame() {
             x.alive &&
             x !== bot &&
             !(g.over && !x.bot && !x.alive) &&
+            !powerOn(x, "ghost") && // a cloaked car can't be seen, so bots never aim at it
             (!tdm || x.team !== bot.team),
         );
         if (!targets.length) continue;
@@ -1345,10 +1444,14 @@ function ArenaGame() {
               d = 1;
             }
             const push = (min - d) / 2;
-            a.x -= (dx / d) * push;
-            a.y -= (dy / d) * push;
-            b.x += (dx / d) * push;
-            b.y += (dy / d) * push;
+            const wa = a.frz ? 0 : 1,
+              wb = b.frz ? 0 : 1;
+            if (wa + wb === 0) continue; // two frozen cars: time is stopped, nobody moves
+            const sh = (push * 2) / (wa + wb);
+            a.x -= (dx / d) * sh * wa;
+            a.y -= (dy / d) * sh * wa;
+            b.x += (dx / d) * sh * wb;
+            b.y += (dy / d) * sh * wb;
             if (pass === 0 && push > 3) {
               fx.impact((a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(dx, -dy), PAL.yellow, 3);
               if (!a.bot || !b.bot) fx.shake = Math.max(fx.shake, 2);
@@ -1395,6 +1498,8 @@ function ArenaGame() {
       }
       g.powerups = g.powerups.filter((q) => q.life > 0);
       for (const b of g.bullets) {
+        b.frz = zones.length > 0 && frozenAt(b.x, b.y, b.owner);
+        if (b.frz) continue; // hangs in the air until the field ends or its owner leaves it
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
@@ -1408,6 +1513,13 @@ function ArenaGame() {
             continue;
           if (tdm && (v.team === b.owner.team || (v.inv ?? 0) > 0)) continue; // no friendly fire, spawn shield
           const target = carAt(v.carId);
+          chargeUp(b.owner); // a clean hit, whether or not a shield soaks it
+          if (powerOn(v, "shield") && Math.random() >= SHIELD_LEAK) {
+            b.life = 0;
+            v.blk = 0.25;
+            fx.impact(b.x, b.y, dir, abilityOf(v.carId)?.color ?? PAL.cyan, 8);
+            continue;
+          }
           v.hp -= b.damage * (1 - target.armor / 250);
           b.life = 0;
           v.hit = 0.14;
@@ -1436,6 +1548,8 @@ function ArenaGame() {
       for (const h of humans) h.cooldown = Math.max(0, h.cooldown - dt);
       for (const v of g.cars) {
         v.hit = Math.max(0, v.hit - dt);
+        v.blk = Math.max(0, (v.blk ?? 0) - dt);
+        if (v.abT) v.abT = Math.max(0, v.abT - dt);
         v.speedT = Math.max(0, v.speedT - dt);
         v.dblT = Math.max(0, v.dblT - dt);
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
@@ -1464,7 +1578,7 @@ function ArenaGame() {
       }
       if (now - g.lastHud > 140) {
         const dots: Dot[] = g.cars
-          .filter((v) => v.alive)
+          .filter((v) => v.alive && (v === p || !powerOn(v, "ghost")))
           .map((v) => ({
             x: (v.x / WORLD.width) * 100,
             y: (v.y / WORLD.height) * 100,
@@ -1622,8 +1736,11 @@ function ArenaGame() {
         }
         for (const v of g.cars) {
           if (!v.alive) continue;
+          const cloaked = powerOn(v, "ghost");
+          if (cloaked && v !== p) continue; // invisible to everyone but its driver
           const car = carAt(v.carId);
           const img = sprites[v.carId];
+          if (cloaked) ctx.globalAlpha = 0.38 + 0.08 * Math.sin(t * 6); // driver sees a faint ghost
           const nearCam = Math.hypot(v.x - cx, v.y - cy) < 1100;
           if (nearCam) {
             // soft drop shadow, offset away from the "light"
@@ -1722,7 +1839,44 @@ function ArenaGame() {
             ctx.arc(0, 0, r + 9, 0, Math.PI * 2);
             ctx.stroke();
           }
+          if (powerOn(v, "shield")) {
+            // Aegis shield: a bubble everyone can see; it flares when it soaks a hit
+            const col = abilityOf(v.carId)?.color ?? "#ff5a5a";
+            const flare = (v.blk ?? 0) > 0;
+            ctx.fillStyle = hexA(col, flare ? 0.45 : 0.16 + 0.05 * Math.sin(t * 5));
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = hexA(col, flare ? 1 : 0.8);
+            ctx.lineWidth = flare ? 5 : 3;
+            ctx.stroke();
+          }
+          if (powerOn(v, "freeze")) {
+            // Time Freeze field around the driver
+            const col = abilityOf(v.carId)?.color ?? "#7df3ff";
+            ctx.fillStyle = hexA(col, 0.07 + 0.03 * Math.sin(t * 4));
+            ctx.beginPath();
+            ctx.arc(0, 0, FREEZE_RADIUS, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = hexA(col, 0.65);
+            ctx.lineWidth = 3;
+            ctx.setLineDash([22, 14]);
+            ctx.lineDashOffset = -t * 30;
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          if (v.frz) {
+            // iced over
+            ctx.fillStyle = "rgba(150,235,255,0.42)";
+            ctx.beginPath();
+            ctx.arc(0, 0, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = "rgba(225,250,255,0.9)";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
           ctx.restore();
+          ctx.globalAlpha = 1;
           if (!v.bot || v.hp < car.hp * 0.85) {
             const pct = Math.max(0, v.hp / car.hp);
             ctx.fillStyle = "#000";
@@ -1760,7 +1914,7 @@ function ArenaGame() {
           }
         }
         for (const b of g.bullets)
-          drawTracer(ctx, b.x, b.y, b.vx, b.vy, bulletCol(!!g.tdm, b.owner));
+          drawTracer(ctx, b.x, b.y, b.vx, b.vy, b.frz ? "#bff8ff" : bulletCol(!!g.tdm, b.owner));
       }
       fx.draw(ctx);
       const pulse = 0.55 + 0.45 * Math.sin(t * 3);
@@ -1807,6 +1961,46 @@ function ArenaGame() {
         rg.addColorStop(1, `rgba(255,0,40,${beat})`);
         ctx.fillStyle = rg;
         ctx.fillRect(0, 0, width, height);
+      }
+      /* v2 power meter (bottom centre) and the frozen-screen tint */
+      const ab = p && p.alive ? abilityOf(p.carId) : null;
+      if (p && ab) {
+        const on = (p.abT ?? 0) > 0;
+        const frac = on ? (p.abT as number) / ab.dur : (p.charge ?? 0) / ab.need;
+        const bw = Math.min(190, width * 0.5),
+          bx = width / 2 - bw / 2,
+          by = height - 44;
+        ctx.fillStyle = "rgba(8,3,26,0.78)";
+        ctx.fillRect(bx - 4, by - 18, bw + 8, 36);
+        ctx.strokeStyle = ab.color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx - 4, by - 18, bw + 8, 36);
+        ctx.fillStyle = on || frac >= 1 ? ab.color : hexA(ab.color, 0.55);
+        ctx.fillRect(bx, by + 2, bw * clamp(frac, 0, 1), 8);
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(bx, by + 2, bw, 8);
+        ctx.font = '9px "Press Start 2P", monospace';
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#fff";
+        ctx.fillText(ab.label, bx, by - 6);
+        ctx.textAlign = "right";
+        ctx.fillStyle = on ? ab.color : "#ffe23d";
+        ctx.fillText(
+          on ? `${Math.ceil(p.abT as number)}s` : `${p.charge ?? 0}/${ab.need}`,
+          bx + bw,
+          by - 6,
+        );
+      }
+      if (p && p.alive && p.frz) {
+        ctx.fillStyle = "rgba(120,220,255,0.16)";
+        ctx.fillRect(0, 0, width, height);
+        ctx.font = '14px "Press Start 2P", monospace';
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = "#d6fbff";
+        ctx.fillText("FROZEN", width / 2, height * 0.2);
       }
     };
 
@@ -1927,10 +2121,12 @@ function ArenaGame() {
           } else if (key === "s" || (!two && key === "2")) raceRef.current();
           else if (key === "escape") setAsk(false);
         } else if (m === "select") {
-          if (key === "arrowleft" || key === "a") pick(selectedRef.current - 1);
-          else if (key === "arrowright" || key === "d") pick(selectedRef.current + 1);
-          else if (two && key === "4") pick2Ref.current(selected2Ref.current - 1);
-          else if (two && key === "6") pick2Ref.current(selected2Ref.current + 1);
+          if (key === "arrowleft" || key === "a") pick(baseOf(selectedRef.current) - 1);
+          else if (key === "arrowright" || key === "d") pick(baseOf(selectedRef.current) + 1);
+          else if (key === "v") setVerRef.current(0, !isV2(selectedRef.current));
+          else if (two && key === "5") setVerRef.current(1, !isV2(selected2Ref.current));
+          else if (two && key === "4") pick2Ref.current(baseOf(selected2Ref.current) - 1);
+          else if (two && key === "6") pick2Ref.current(baseOf(selected2Ref.current) + 1);
           else if (key === "enter" || (two && key === "0")) askRef.current();
         }
       }
@@ -1970,6 +2166,55 @@ function ArenaGame() {
     onContextMenu: (e: React.MouseEvent) => e.preventDefault(),
   });
 
+  /** V1 / V2 buttons shown beside a car that has an upgraded form */
+  const verToggle = (pi: number, idx: number) => {
+    const v2 = v2Of(baseOf(idx));
+    if (v2 < 0) return null;
+    const on = isV2(idx);
+    return (
+      <div className="ver-toggle" role="group" aria-label={`Player ${pi + 1} car version`}>
+        <button
+          type="button"
+          className={on ? "" : "on"}
+          aria-pressed={!on}
+          onClick={() => setVer(pi, false)}
+        >
+          V1
+        </button>
+        <button
+          type="button"
+          className={on ? "on" : ""}
+          aria-pressed={on}
+          onClick={() => setVer(pi, true)}
+        >
+          V2 {!wallet.has(v2) && <Lock size={11} />}
+        </button>
+      </div>
+    );
+  };
+  /** power description + price/owned line for a V2 car */
+  const abilityLine = (idx: number) => {
+    const car = carAt(idx);
+    const ab = abilityOf(idx);
+    if (!isV2(idx) || !ab) return null;
+    return (
+      <div className="ability-line" style={{ "--a": ab.color } as CSSProperties}>
+        <b>{ab.label}</b>
+        <span>{ab.blurb}</span>
+        <em>{wallet.has(idx) ? "OWNED" : `${fmtXp(car.price ?? 0)} XP`}</em>
+      </div>
+    );
+  };
+  const buyBtn = (idx: number, small = false) => (
+    <button
+      type="button"
+      className="arcade-btn buy-btn"
+      onClick={() => buy(idx)}
+      aria-label={`Buy ${carAt(idx).name} for ${carAt(idx).price} XP`}
+    >
+      <ShoppingCart size={small ? 14 : 16} /> BUY <small>{fmtXp(carAt(idx).price ?? 0)} XP</small>
+    </button>
+  );
   const current = carAt(selected);
   const ovr = rating(current);
   const vars = { "--c": current.color } as CSSProperties;
@@ -2028,8 +2273,8 @@ function ArenaGame() {
             </div>
             <div className="top-right">
               {mode === "select" && !twoP && twoToggle()}
-              <span className="credit">
-                CREDIT <b>01</b>
+              <span className="credit" title="Your XP, saved on this device">
+                XP <b>{fmtXp(wallet.xp)}</b>
               </span>
               <button
                 type="button"
@@ -2071,6 +2316,7 @@ function ArenaGame() {
                         <h2 className="car-name">{car.name}</h2>
                         <span className="rank-badge">{rank(o)}</span>
                       </div>
+                      {abilityLine(idx)}
                       <div className="stat-list">
                         {(
                           [
@@ -2098,7 +2344,7 @@ function ArenaGame() {
                     <button
                       type="button"
                       className="nav-arrow nav-left"
-                      onClick={() => choose(idx - 1)}
+                      onClick={() => choose(baseOf(idx) - 1)}
                       aria-label={`Player ${pi + 1} previous car`}
                     >
                       <ChevronLeft size={26} />
@@ -2106,23 +2352,29 @@ function ArenaGame() {
                     <button
                       type="button"
                       className="nav-arrow nav-right"
-                      onClick={() => choose(idx + 1)}
+                      onClick={() => choose(baseOf(idx) + 1)}
                       aria-label={`Player ${pi + 1} next car`}
                     >
                       <ChevronRight size={26} />
                     </button>
                     <span className="showcase-count">
-                      {String(idx + 1).padStart(2, "0")} / {String(cars.length).padStart(2, "0")}
+                      {String(baseOf(idx) + 1).padStart(2, "0")} /{" "}
+                      {String(cars.length).padStart(2, "0")}
                     </span>
+                    {verToggle(pi, idx)}
                   </div>
                   <div className="half-actions">
-                    <button
-                      type="button"
-                      className="arcade-btn start-btn"
-                      onClick={() => askRef.current()}
-                    >
-                      <Play size={16} /> START <small>{pi ? "0" : "ENTER"}</small>
-                    </button>
+                    {lockedId(idx) ? (
+                      buyBtn(idx, true)
+                    ) : (
+                      <button
+                        type="button"
+                        className="arcade-btn start-btn"
+                        onClick={() => askRef.current()}
+                      >
+                        <Play size={16} /> START <small>{pi ? "0" : "ENTER"}</small>
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="arcade-btn alt-btn"
@@ -2151,14 +2403,14 @@ function ArenaGame() {
                           key={c.name}
                           type="button"
                           role="option"
-                          aria-selected={idx === i}
-                          className={`tile ${idx === i ? "tile-active" : ""}`}
+                          aria-selected={baseOf(idx) === i}
+                          className={`tile ${baseOf(idx) === i ? "tile-active" : ""}`}
                           style={{ "--c": c.color } as CSSProperties}
                           onClick={() => choose(i)}
                           aria-label={`Player ${pi + 1} select ${c.name}`}
                         >
                           <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
-                          {idx === i && <span className="tile-flag">P{pi + 1}</span>}
+                          {baseOf(idx) === i && <span className="tile-flag">P{pi + 1}</span>}
                           <span className="tile-art">
                             {broken[i] ? (
                               <span className="tile-swatch" />
@@ -2202,6 +2454,7 @@ function ArenaGame() {
                     </span>
                   </div>
                   <span className="car-model">{current.model}</span>
+                  {abilityLine(selected)}
                   <div className="stat-list">
                     {statRows.map(([label, value, pct, Icon]) => (
                       <div className="stat-row" key={label}>
@@ -2229,7 +2482,7 @@ function ArenaGame() {
                 <button
                   type="button"
                   className="nav-arrow nav-left"
-                  onClick={() => pick(selected - 1)}
+                  onClick={() => pick(baseOf(selected) - 1)}
                   aria-label="Previous car"
                 >
                   <ChevronLeft size={26} />
@@ -2237,24 +2490,30 @@ function ArenaGame() {
                 <button
                   type="button"
                   className="nav-arrow nav-right"
-                  onClick={() => pick(selected + 1)}
+                  onClick={() => pick(baseOf(selected) + 1)}
                   aria-label="Next car"
                 >
                   <ChevronRight size={26} />
                 </button>
                 <span className="showcase-count">
-                  {String(selected + 1).padStart(2, "0")} / {String(cars.length).padStart(2, "0")}
+                  {String(baseOf(selected) + 1).padStart(2, "0")} /{" "}
+                  {String(cars.length).padStart(2, "0")}
                 </span>
+                {verToggle(0, selected)}
               </div>
 
               <aside className="action-panel">
-                <button
-                  type="button"
-                  className="arcade-btn start-btn"
-                  onClick={() => askRef.current()}
-                >
-                  <Play size={18} /> START <small>ENTER</small>
-                </button>
+                {lockedId(selected) ? (
+                  buyBtn(selected)
+                ) : (
+                  <button
+                    type="button"
+                    className="arcade-btn start-btn"
+                    onClick={() => askRef.current()}
+                  >
+                    <Play size={18} /> START <small>ENTER</small>
+                  </button>
+                )}
                 <button type="button" className="arcade-btn alt-btn" {...hold("testfire")}>
                   <Crosshair size={16} /> TEST FIRE <small>HOLD SPACE</small>
                 </button>
@@ -2279,14 +2538,14 @@ function ArenaGame() {
                     key={car.name}
                     type="button"
                     role="option"
-                    aria-selected={selected === i}
-                    className={`tile ${selected === i ? "tile-active" : ""}`}
+                    aria-selected={baseOf(selected) === i}
+                    className={`tile ${baseOf(selected) === i ? "tile-active" : ""}`}
                     style={{ "--c": car.color } as CSSProperties}
                     onClick={() => pick(i)}
                     aria-label={`Select ${car.name}`}
                   >
                     <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
-                    {selected === i && <span className="tile-flag">P1</span>}
+                    {baseOf(selected) === i && <span className="tile-flag">P1</span>}
                     <span className="tile-art">
                       {broken[i] ? (
                         <span className="tile-swatch" />
@@ -2305,6 +2564,12 @@ function ArenaGame() {
                 ))}
               </div>
             </section>
+          </div>
+        )}
+
+        {mode === "select" && notice && (
+          <div className="lock-notice" role="status" aria-live="polite">
+            {notice}
           </div>
         )}
 

@@ -1,4 +1,4 @@
-import { PAL, carAt, cars, drawFallbackCar, getSprites, spriteReady } from "./cars";
+import { PAL, baseOf, carAt, cars, drawFallbackCar, getSprites, spriteReady } from "./cars";
 import { getSkins, type SkinKey } from "./skins";
 import { Fx, type Sfx } from "./fx";
 import crateImg from "@/assets/race/crates.webp";
@@ -337,7 +337,12 @@ export class Race {
     }
     const cols = [-170, 0, 170];
     for (let i = 0; i < N; i++) {
-      const id = two && i === 1 ? (pick2 as number) % cars.length : (pick + i) % cars.length;
+      const id =
+        two && i === 1
+          ? (pick2 as number) // a v2 id is kept as is (ids past the base cars are the upgraded forms)
+          : i === 0
+            ? pick
+            : (baseOf(pick) + i) % cars.length;
       const s = slots[i] as number;
       const base = 330 + carAt(id).speed * 3.2;
       const bot = i > (two ? 1 : 0);

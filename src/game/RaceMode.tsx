@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Race, RaceView, type RaceResult } from "./race";
 import type { Sfx } from "./fx";
+import { addXp } from "./xp";
 
 type Props = {
   carIndex: number;
@@ -126,6 +127,7 @@ export function RaceMode({
       if (view.result && !shown) {
         shown = true;
         setRes(view.result);
+        addXp(view.result.xp);
       }
       if (view2?.result && !shown2) {
         shown2 = true;
