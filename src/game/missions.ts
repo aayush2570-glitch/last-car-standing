@@ -4,8 +4,7 @@ import { addXp, loadWallet } from "./xp";
 
 /**
  * Missions: 3 active at a time, saved in localStorage as {exp, list:[{id, p(rogress)}]}.
- * A finished mission pays its XP, is removed and replaced by a fresh one; the whole set also
- * re-rolls when the 24h timer runs out (finished or not).
+ * A finished mission pays its XP once and stays marked as done; all 3 re-roll when the 24h timer runs out.
  */
 const KEY = "lcs.missions";
 const EVT = "lcs-missions";
@@ -23,7 +22,7 @@ export type Def = {
   /** only offered when this is true (e.g. don't ask for a V2 power the player can't use) */
   ok?: (owned: number[]) => boolean;
 };
-export type Slot = { id: string; p: number; d?: number[] };
+export type Slot = { id: string; p: number; d?: number[]; done?: boolean };
 type State = { exp: number; list: Slot[] };
 
 export const DEFS: Def[] = [
@@ -169,6 +168,7 @@ function set(id: string, value: number, d?: number[]) {
   if (i < 0) return;
   const slot = s.list[i] as Slot;
   const def = defOf(id) as Def;
+  if (slot.done) return; // already paid; it stays on the list until the 24h timer re-rolls everything
   const p = Math.min(def.target, Math.max(slot.p, value));
   if (p === slot.p && !d) return;
   slot.p = p;
@@ -180,7 +180,7 @@ function set(id: string, value: number, d?: number[]) {
     } catch {
       /* ignore */
     }
-    s.list[i] = pick(s.list.map((x) => x.id)); // the finished one leaves storage, a new one takes its place
+    slot.done = true;
   }
   write(s);
 }

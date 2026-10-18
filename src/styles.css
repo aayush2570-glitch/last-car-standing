@@ -501,3 +501,6 @@ kbd { display: inline-block; min-width: 20px; padding: 2px 5px; margin-right: 3p
 .msn-tick { display: grid; place-items: center; flex: none; width: 34px; height: 34px; color: #06210f; background: #39ff88; border: 3px solid #000; border-radius: 50%; }
 @keyframes msnPop { 0% { opacity: 0; transform: translateY(-24px); } 8% { opacity: 1; transform: translateY(0); } 78% { opacity: 1; } 100% { opacity: 0; transform: translateY(-6px); } }
 @media (prefers-reduced-motion: reduce) { .msn-toast { animation: msnFade 3.8s linear forwards; } @keyframes msnFade { 0%, 80% { opacity: 1; } 100% { opacity: 0; } } }
+.msn-done { border-color: #39ff88; opacity: .8; }
+.msn-done .msn-bar i { background: #39ff88; }
+.msn-done .msn-prog { color: #39ff88; }

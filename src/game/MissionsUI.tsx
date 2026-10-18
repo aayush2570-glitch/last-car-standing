@@ -64,7 +64,7 @@ export function MissionsButton() {
               if (!d) return null;
               const pct = Math.min(100, Math.round((m.p / d.target) * 100));
               return (
-                <div className="msn-row" key={m.id}>
+                <div className={`msn-row ${m.done ? "msn-done" : ""}`} key={m.id}>
                   <div className="msn-top">
                     <b>{d.name}</b>
                     <em>+{fmt(d.xp)} XP</em>
@@ -80,8 +80,7 @@ export function MissionsButton() {
                     <i style={{ width: `${pct}%` }} />
                   </div>
                   <span className="msn-prog">
-                    {m.p}/{d.target}
-                    {d.unit ? ` ${d.unit}` : ""}
+                    {m.done ? "COMPLETED" : `${m.p}/${d.target}${d.unit ? ` ${d.unit}` : ""}`}
                   </span>
                 </div>
               );
