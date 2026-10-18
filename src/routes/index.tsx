@@ -41,6 +41,19 @@ import {
   v2Of,
 } from "@/game/cars";
 import { addXp, buyCar, useWallet } from "@/game/xp";
+import { MissionToasts, MissionsButton } from "@/game/MissionsUI";
+import {
+  mAlive,
+  mBehind,
+  mBlock,
+  mBuy,
+  mDamage,
+  mEnd,
+  mKill,
+  mPickup,
+  mPower,
+  mStart,
+} from "@/game/missions";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
 import { RaceMode } from "@/game/RaceMode";
 
@@ -484,6 +497,7 @@ function ArenaGame() {
   const startMatch = useCallback(() => {
     setWorld("ffa");
     const idx = selectedRef.current;
+    mStart("ffa", idx);
     const playerCar = carAt(idx);
     const player: Vehicle = {
       x: 1200,
@@ -584,6 +598,7 @@ function ArenaGame() {
     (team: number, team2?: number) => {
       setWorld("tdm");
       const idx = selectedRef.current;
+      mStart("tdm", idx);
       const idx2 = selected2Ref.current;
       const two = twoPRef.current && team2 !== undefined;
       let k = 0;
@@ -781,6 +796,12 @@ function ArenaGame() {
         };
         xp = (tdm.draw ? 300 : won ? 750 : 200) + kills * 30;
       }
+      const pl = gameRef.current?.player;
+      mEnd({
+        mode: tdm ? "tdm" : "ffa",
+        won,
+        hpFrac: pl && pl.alive ? pl.hp / carAt(pl.carId).hp : 1,
+      });
       addXp(xp);
       setResult({ won, position, xp, tdm: res, two });
       setModeSync("result");
@@ -817,6 +838,7 @@ function ArenaGame() {
       return;
     }
     if (buyCar(id, price)) {
+      mBuy();
       sfxRef.current.blip();
       say(`${c.name.toUpperCase()} UNLOCKED!`);
     } else say(`NEED ${fmtXp(Math.max(0, price - wallet.xp))} MORE XP`);
@@ -1130,6 +1152,10 @@ function ArenaGame() {
             Math.hypot(x - z.x, y - z.y) < FREEZE_RADIUS,
         );
       for (const v of g.cars) v.frz = v.alive && zones.length > 0 && frozenAt(v.x, v.y, v);
+      if (!g.over) {
+        if (!tdm && p.alive) mAlive(dt);
+        if (tdm) mBehind((tdm.score[1 - tdm.team] as number) - (tdm.score[tdm.team] as number));
+      }
       /* every bullet that lands on an enemy charges the shooter's v2 power; a full charge fires it at once */
       const chargeUp = (o: Vehicle) => {
         const ab = abilityOf(o.carId);
@@ -1138,6 +1164,7 @@ function ArenaGame() {
         if (o.charge >= ab.need) {
           o.charge = 0;
           o.abT = ab.dur;
+          if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
           if (!o.bot) {
             sfx.blip();
@@ -1523,6 +1550,7 @@ function ArenaGame() {
           else v.dblT = 10;
           fx.impact(q.x, q.y, 0, POWER_COLOR[q.kind], 12);
           if (!v.bot) sfx.blip();
+          if (v === p) mPickup();
         }
       }
       g.powerups = g.powerups.filter((q) => q.life > 0);
@@ -1546,9 +1574,11 @@ function ArenaGame() {
           if (powerOn(v, "shield") && Math.random() >= SHIELD_LEAK) {
             b.life = 0;
             v.blk = 0.25;
+            if (v === p) mBlock();
             fx.impact(b.x, b.y, dir, abilityOf(v.carId)?.color ?? PAL.cyan, 8);
             continue;
           }
+          if (v === p) mDamage();
           v.hp -= b.damage * (1 - target.armor / 250);
           b.life = 0;
           v.hit = 0.14;
@@ -1562,8 +1592,15 @@ function ArenaGame() {
             v.alive = false;
             fx.explode(v.x, v.y, target.color);
             sfx.boom();
-            if (b.owner === p) g.kills++;
-            else if (g.player2 && b.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+            if (b.owner === p) {
+              g.kills++;
+              mKill({
+                victimV2: isV2(v.carId),
+                frozen: !!v.frz,
+                byFreeze: abilityOf(p.carId)?.kind === "freeze",
+                ghost: powerOn(p, "ghost"),
+              });
+            } else if (g.player2 && b.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
             if (tdm) {
               v.respawn = TDM_RESPAWN;
               if (!g.over) tdm.score[b.owner.team === 1 ? 1 : 0]++;
@@ -2402,6 +2439,8 @@ function ArenaGame() {
         <canvas ref={canvasRef} className="arena-canvas" aria-label="Live car combat arena" />
         <div className="crt" aria-hidden="true" />
 
+        <MissionToasts />
+        {mode === "select" && <MissionsButton />}
         {mode !== "playing" && mode !== "race" && (
           <header className="top-bar">
             <div className="logo" aria-label="Last Car Standing">

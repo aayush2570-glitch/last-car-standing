@@ -12,6 +12,7 @@ import {
 import { Race, RaceView, type RaceResult } from "./race";
 import type { Sfx } from "./fx";
 import { addXp } from "./xp";
+import { mEnd, mStart } from "./missions";
 
 type Props = {
   carIndex: number;
@@ -65,6 +66,7 @@ export function RaceMode({
     const startedTwo = twoRef.current && !!canvas2 && !!ctx2;
     const shared = startedTwo ? new Race(carIndex, carIndex2) : null;
     const view = new RaceView(carIndex, shared ? { race: shared, who: 0 } : undefined);
+    mStart("race", carIndex);
     const view2 = shared ? new RaceView(carIndex2, { race: shared, who: 1 }) : null;
     if (view2) {
       view.tag = "P1";
@@ -128,6 +130,7 @@ export function RaceMode({
         shown = true;
         setRes(view.result);
         addXp(view.result.xp);
+        mEnd({ mode: "race", won: view.result.pos === 1, top3: view.result.pos <= 3 });
       }
       if (view2?.result && !shown2) {
         shown2 = true;
