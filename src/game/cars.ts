@@ -9,6 +9,9 @@ import yellowTruck from "@/assets/cars/yellow_turret_truck.webp";
 import redlineV2 from "@/assets/cars/redline_v2.webp";
 import phantomV2 from "@/assets/cars/phantom_v2.webp";
 import blueTurretV2 from "@/assets/cars/blue_turret_v2.webp";
+import militaryV2 from "@/assets/cars/military_v2.webp";
+import militaryShop from "@/assets/cars/military_v2_shop.webp";
+import militaryTurret from "@/assets/cars/military_v2_turret.webp";
 
 /**
  * NOTE (Chrome 109): every colour used by the canvas or by inline styles is a plain
@@ -43,6 +46,8 @@ export type Car = {
   name: string;
   model: string;
   url: string;
+  /** optional garage-tile picture (e.g. car with its separate turret mounted) */
+  shopUrl?: string;
   hp: number;
   speed: number;
   fireRate: number;
@@ -54,13 +59,13 @@ export type Car = {
   h: number;
   /** v2 forms only: index (in `cars`) of the car this is the upgraded form of */
   base?: number;
-  /** v2 forms only: XP price in the garage */
+  /** XP price in the garage (v1 cars that start locked, and every v2 form) */
   price?: number;
   /** v2 forms only: special power */
   ability?: AbilityKind;
 };
 
-export type AbilityKind = "freeze" | "ghost" | "shield";
+export type AbilityKind = "freeze" | "ghost" | "shield" | "turret";
 
 export type AbilityInfo = {
   kind: AbilityKind;
@@ -98,7 +103,32 @@ export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
     color: "#ff5a5a",
     blurb: "20 hits: shield for 30s, blocks 75% of hits",
   },
+  turret: {
+    kind: "turret",
+    label: "AUTO TURRET",
+    need: 10,
+    dur: 30,
+    color: "#b6ff3d",
+    blurb: "10 hits: rear gun auto-aims & fires at the nearest enemy for 30s",
+  },
 };
+
+/** XP price of the locked v1 cars (Redline + Heavy Metal): v1 must be bought before its v2 */
+export const V1_LOCK_PRICE = 5000;
+
+/* ── Military Jeep v2 rear turret (drawn on top of the car, rotates freely 360°) ── */
+/** mount point: how far behind the car centre (fraction of car height) the turret pivots */
+export const TURRET_MOUNT = 0.34;
+/** drawn width of the turret head (px) – sized for the 46x96 jeep */
+export const TURRET_W = 26;
+/** sprite pivot (fraction of sprite height from the top) = the centre of the turret head */
+export const TURRET_PIVOT_Y = 0.744;
+/** distance from the pivot to the muzzle (px) */
+export const TURRET_MUZZLE = 35;
+/** how fast the turret swings (rad/s) */
+export const TURRET_TURN = 5.5;
+/** how far (px) the turret will engage a target */
+export const TURRET_RANGE = 900;
 
 /** radius (px) of the Time Freeze field around the car */
 export const FREEZE_RADIUS = 380;
@@ -198,6 +228,7 @@ export const cars: Car[] = [
     color: "#ff4b5c",
     w: 67,
     h: 80,
+    price: V1_LOCK_PRICE,
   },
   {
     name: "Heavy Metal",
@@ -211,6 +242,7 @@ export const cars: Car[] = [
     color: "#ffe23d",
     w: 46,
     h: 80,
+    price: V1_LOCK_PRICE,
   },
 ];
 
@@ -220,7 +252,7 @@ export const v2Cars: Car[] = [
     name: "Redline v2",
     model: "AEGIS PROTOCOL",
     url: redlineV2,
-    hp: 150,
+    hp: 200,
     speed: 76,
     fireRate: 68,
     damage: 92,
@@ -253,9 +285,9 @@ export const v2Cars: Car[] = [
     model: "CHRONO SUPPORT",
     url: blueTurretV2,
     hp: 160,
-    speed: 54,
+    speed: 99,
     fireRate: 60,
-    damage: 76,
+    damage: 120,
     armor: 96,
     color: "#4dd8ff",
     w: 45,
@@ -263,6 +295,23 @@ export const v2Cars: Car[] = [
     base: 1,
     price: 70000,
     ability: "freeze",
+  },
+  {
+    name: "Military Jeep v2",
+    model: "AUTO TURRET",
+    url: militaryV2,
+    shopUrl: militaryShop,
+    hp: 150,
+    speed: 75,
+    fireRate: 72,
+    damage: 70,
+    armor: 98,
+    color: "#7dff5a",
+    w: 46,
+    h: 96,
+    base: 2,
+    price: 30000,
+    ability: "turret",
   },
 ];
 
@@ -301,6 +350,14 @@ export function getSprites(): HTMLImageElement[] {
     return img;
   });
   return sprites;
+}
+
+let turretSprite: HTMLImageElement | null = null;
+export function getTurretSprite(): HTMLImageElement {
+  if (turretSprite) return turretSprite;
+  turretSprite = new Image();
+  turretSprite.src = militaryTurret;
+  return turretSprite;
 }
 
 export const spriteReady = (img: HTMLImageElement | undefined): img is HTMLImageElement =>

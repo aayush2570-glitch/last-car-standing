@@ -27,6 +27,13 @@ import {
   type Car,
   FREEZE_RADIUS,
   SHIELD_LEAK,
+  TURRET_MOUNT,
+  TURRET_W,
+  TURRET_PIVOT_Y,
+  TURRET_MUZZLE,
+  TURRET_TURN,
+  TURRET_RANGE,
+  getTurretSprite,
   abilityOf,
   baseOf,
   isV2,
@@ -111,6 +118,9 @@ type Vehicle = {
   abT?: number;
   frz?: boolean;
   blk?: number;
+  /* Military Jeep v2 turret: world angle it points at, shot cooldown */
+  tur?: number;
+  tcd?: number;
 };
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
@@ -283,7 +293,7 @@ const NUMPAD: Record<string, string> = {
 };
 const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
 /** is this car's v2 power (of the given kind) running right now? */
-const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "shield") =>
+const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "shield" | "turret") =>
   (v.abT ?? 0) > 0 && abilityOf(v.carId)?.kind === kind;
 const fmtXp = (n: number) => n.toLocaleString("en-US");
 const P1_COLOR = "56,160,255";
@@ -336,7 +346,7 @@ const lineBlocked = (x1: number, y1: number, x2: number, y2: number, pad = 0) =>
   );
 const shotInterval = (c: Car) => (1 - c.fireRate / 140) * 0.53 + 0.14;
 const rating = (c: Car) =>
-  Math.round(((c.hp / 160) * 100 + c.speed + c.fireRate + c.damage + c.armor) / 5);
+  Math.round(((c.hp / 200) * 100 + c.speed + c.fireRate + c.damage + c.armor) / 5);
 const rank = (r: number) => (r >= 76 ? "S" : r >= 70 ? "A" : r >= 64 ? "B" : "C");
 const fmtTime = (s: number) =>
   `${Math.floor(s / 60)
@@ -382,7 +392,12 @@ function ArenaGame() {
     if (noticeT.current) clearTimeout(noticeT.current);
     noticeT.current = setTimeout(() => setNotice(""), 2600);
   }, []);
-  const lockedId = (id: number) => isV2(id) && !wallet.has(id);
+  /** v1 cars with a price (Redline, Heavy Metal) start locked; owning their v2 counts too (old saves) */
+  const ownsV1 = (b: number) =>
+    (cars[b] as Car).price == null || wallet.has(b) || wallet.has(v2Of(b));
+  const lockedId = (id: number) => (isV2(id) ? !wallet.has(id) : !ownsV1(id));
+  /** a v2 can only be bought once its v1 is owned */
+  const needsV1 = (id: number) => isV2(id) && !ownsV1(baseOf(id));
   const [mode, setMode] = useState<"select" | "playing" | "result" | "race">("select");
   const [hud, setHud] = useState<{
     hp: number;
@@ -796,6 +811,11 @@ function ArenaGame() {
     const c = carAt(id);
     const price = c.price ?? 0;
     if (wallet.has(id)) return;
+    if (needsV1(id)) {
+      const b = cars[baseOf(id)] as Car;
+      say(`BUY ${b.name.toUpperCase()} V1 FIRST (${fmtXp(b.price ?? 0)} XP)`);
+      return;
+    }
     if (buyCar(id, price)) {
       sfxRef.current.blip();
       say(`${c.name.toUpperCase()} UNLOCKED!`);
@@ -1075,6 +1095,15 @@ function ArenaGame() {
       const img = sprites[s.carId];
       if (spriteReady(img)) ctx.drawImage(img, -g.carW / 2, -g.carH / 2, g.carW, g.carH);
       else drawFallbackCar(ctx, car, g.carW, g.carH);
+      if (car.ability === "turret") {
+        const ts = getTurretSprite();
+        if (spriteReady(ts)) {
+          const k = g.carH / car.h,
+            tw = TURRET_W * k,
+            th = (tw * ts.naturalHeight) / ts.naturalWidth;
+          ctx.drawImage(ts, -tw / 2, g.carH * TURRET_MOUNT - th * TURRET_PIVOT_Y, tw, th);
+        }
+      }
       ctx.restore();
 
       // bullets
@@ -1546,6 +1575,71 @@ function ArenaGame() {
         (b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height,
       );
       for (const h of humans) h.cooldown = Math.max(0, h.cooldown - dt);
+      /* Military Jeep v2 rear turret: idles along the car; while AUTO TURRET is on it swings 360° to the
+         nearest enemy and keeps firing at it (FFA + TDM only — the race has no abilities) */
+      for (const v of g.cars) {
+        if (!v.alive || abilityOf(v.carId)?.kind !== "turret") continue;
+        const stats = carAt(v.carId);
+        if (v.tur === undefined) v.tur = v.angle;
+        v.tcd = Math.max(0, (v.tcd ?? 0) - dt);
+        const mount = stats.h * TURRET_MOUNT;
+        const mx = v.x - Math.sin(v.angle) * -mount,
+          my = v.y + Math.cos(v.angle) * mount;
+        let want = v.angle;
+        let canFire = false;
+        let tgt: Vehicle | null = null;
+        if (powerOn(v, "turret") && !v.frz) {
+          // nearest enemy: closest one with a clear line of fire wins, otherwise just track the closest
+          let bestVis = Infinity,
+            bestAny = Infinity,
+            visT: Vehicle | null = null,
+            anyT: Vehicle | null = null;
+          for (const o of g.cars) {
+            if (o === v || !o.alive || (o.inv ?? 0) > 0 || powerOn(o, "ghost")) continue;
+            if (tdm && o.team === v.team) continue;
+            const d = Math.hypot(o.x - mx, o.y - my);
+            if (d < bestAny) {
+              bestAny = d;
+              anyT = o;
+            }
+            if (d < bestVis && d < TURRET_RANGE && !lineBlocked(mx, my, o.x, o.y, 6)) {
+              bestVis = d;
+              visT = o;
+            }
+          }
+          tgt = visT ?? anyT;
+          canFire = !!visT;
+        }
+        if (tgt) {
+          // lead the shot a little
+          const dist = Math.hypot(tgt.x - mx, tgt.y - my);
+          const lead = Math.min(0.5, dist / 570) * 0.7;
+          const ax = tgt.x + (tgt.vx ?? 0) * lead - mx,
+            ay = tgt.y + (tgt.vy ?? 0) * lead - my;
+          want = Math.atan2(ax, -ay);
+        }
+        // smooth 360° swing along the shortest way round
+        const diff = ((want - v.tur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        const step2 = TURRET_TURN * dt;
+        v.tur += Math.abs(diff) <= step2 ? diff : Math.sign(diff) * step2;
+        if (canFire && !v.frz && Math.abs(diff) < 0.12 && v.tcd <= 0) {
+          const bx = mx + Math.sin(v.tur) * TURRET_MUZZLE,
+            by = my - Math.cos(v.tur) * TURRET_MUZZLE;
+          g.bullets.push({
+            x: bx,
+            y: by,
+            vx: Math.sin(v.tur) * 570,
+            vy: -Math.cos(v.tur) * 570,
+            owner: v,
+            life: 2.2,
+            damage: stats.damage * 0.16,
+          });
+          v.tcd = shotInterval(stats) * 1.1;
+          fx.muzzle(bx, by, v.tur, abilityOf(v.carId)?.color ?? "#b6ff3d");
+          if (!v.bot && Math.hypot(v.x - (g.cam?.x ?? v.x), v.y - (g.cam?.y ?? v.y)) < 1100)
+            sfx.shot(0.6 + stats.fireRate / 200);
+        }
+      }
       for (const v of g.cars) {
         v.hit = Math.max(0, v.hit - dt);
         v.blk = Math.max(0, (v.blk ?? 0) - dt);
@@ -1817,6 +1911,28 @@ function ArenaGame() {
           ctx.stroke();
           if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
           else drawFallbackCar(ctx, car, car.w, car.h);
+          if (abilityOf(v.carId)?.kind === "turret") {
+            // separate rear gun: always sits in the truck bed, swings on its own while the power runs
+            const ts = getTurretSprite();
+            if (spriteReady(ts)) {
+              const tw = TURRET_W,
+                th = (tw * ts.naturalHeight) / ts.naturalWidth;
+              ctx.save();
+              ctx.translate(0, car.h * TURRET_MOUNT);
+              if (powerOn(v, "turret")) {
+                ctx.fillStyle = hexA(
+                  abilityOf(v.carId)?.color ?? "#b6ff3d",
+                  0.22 + 0.08 * Math.sin(t * 8),
+                );
+                ctx.beginPath();
+                ctx.arc(0, 0, tw * 0.62, 0, Math.PI * 2);
+                ctx.fill();
+              }
+              ctx.rotate((v.tur ?? v.angle) - v.angle);
+              ctx.drawImage(ts, -tw / 2, -th * TURRET_PIVOT_Y, tw, th);
+              ctx.restore();
+            }
+          }
           if ((v.inv ?? 0) > 0) {
             // fresh-spawn shield
             ctx.strokeStyle = `rgba(255,255,255,${0.4 + 0.4 * Math.sin(t * 18)})`;
@@ -2196,12 +2312,28 @@ function ArenaGame() {
   const abilityLine = (idx: number) => {
     const car = carAt(idx);
     const ab = abilityOf(idx);
+    if (!isV2(idx) && car.price != null)
+      return (
+        <div className="ability-line" style={{ "--a": "#ffe23d" } as CSSProperties}>
+          <b>{ownsV1(idx) ? "UNLOCKED" : "LOCKED CAR"}</b>
+          <span>
+            {ownsV1(idx) ? "V1 bought — V2 is available" : "buy V1 to drive it & unlock V2"}
+          </span>
+          <em>{ownsV1(idx) ? "OWNED" : `${fmtXp(car.price)} XP`}</em>
+        </div>
+      );
     if (!isV2(idx) || !ab) return null;
     return (
       <div className="ability-line" style={{ "--a": ab.color } as CSSProperties}>
         <b>{ab.label}</b>
         <span>{ab.blurb}</span>
-        <em>{wallet.has(idx) ? "OWNED" : `${fmtXp(car.price ?? 0)} XP`}</em>
+        <em>
+          {wallet.has(idx)
+            ? "OWNED"
+            : needsV1(idx)
+              ? "BUY V1 FIRST"
+              : `${fmtXp(car.price ?? 0)} XP`}
+        </em>
       </div>
     );
   };
@@ -2209,17 +2341,22 @@ function ArenaGame() {
     <button
       type="button"
       className="arcade-btn buy-btn"
-      onClick={() => buy(idx)}
-      aria-label={`Buy ${carAt(idx).name} for ${carAt(idx).price} XP`}
+      onClick={() => buy(needsV1(idx) ? baseOf(idx) : idx)}
+      aria-label={`Buy ${carAt(needsV1(idx) ? baseOf(idx) : idx).name} for ${carAt(needsV1(idx) ? baseOf(idx) : idx).price} XP`}
     >
-      <ShoppingCart size={small ? 14 : 16} /> BUY <small>{fmtXp(carAt(idx).price ?? 0)} XP</small>
+      <ShoppingCart size={small ? 14 : 16} /> BUY{needsV1(idx) ? " V1 FIRST" : ""}{" "}
+      <small>
+        {needsV1(idx)
+          ? `${fmtXp((cars[baseOf(idx)] as Car).price ?? 0)} XP`
+          : `${fmtXp(carAt(idx).price ?? 0)} XP`}
+      </small>
     </button>
   );
   const current = carAt(selected);
   const ovr = rating(current);
   const vars = { "--c": current.color } as CSSProperties;
   const statRows: [string, number, number, typeof Heart][] = [
-    ["HP", current.hp, (current.hp / 160) * 100, Heart],
+    ["HP", current.hp, (current.hp / 200) * 100, Heart],
     ["SPEED", current.speed, current.speed, Gauge],
     ["FIRE RATE", current.fireRate, current.fireRate, Zap],
     ["DAMAGE", current.damage, current.damage, Crosshair],
@@ -2320,7 +2457,7 @@ function ArenaGame() {
                       <div className="stat-list">
                         {(
                           [
-                            ["HP", car.hp, (car.hp / 160) * 100],
+                            ["HP", car.hp, (car.hp / 200) * 100],
                             ["SPD", car.speed, car.speed],
                             ["FIRE", car.fireRate, car.fireRate],
                             ["DMG", car.damage, car.damage],
@@ -2410,13 +2547,14 @@ function ArenaGame() {
                           aria-label={`Player ${pi + 1} select ${c.name}`}
                         >
                           <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
+                          {!ownsV1(i) && <Lock size={11} className="tile-lock" />}
                           {baseOf(idx) === i && <span className="tile-flag">P{pi + 1}</span>}
                           <span className="tile-art">
                             {broken[i] ? (
                               <span className="tile-swatch" />
                             ) : (
                               <img
-                                src={c.url}
+                                src={c.shopUrl ?? c.url}
                                 alt=""
                                 loading="eager"
                                 onError={() => setBroken((b) => ({ ...b, [i]: true }))}
@@ -2545,13 +2683,14 @@ function ArenaGame() {
                     aria-label={`Select ${car.name}`}
                   >
                     <span className="tile-index">{String(i + 1).padStart(2, "0")}</span>
+                    {!ownsV1(i) && <Lock size={11} className="tile-lock" />}
                     {baseOf(selected) === i && <span className="tile-flag">P1</span>}
                     <span className="tile-art">
                       {broken[i] ? (
                         <span className="tile-swatch" />
                       ) : (
                         <img
-                          src={car.url}
+                          src={car.shopUrl ?? car.url}
                           alt=""
                           loading="eager"
                           onError={() => setBroken((b) => ({ ...b, [i]: true }))}
