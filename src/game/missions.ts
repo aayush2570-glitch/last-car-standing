@@ -115,6 +115,78 @@ export const DEFS: Def[] = [
     xp: 1500,
     ok: (o) => o.includes(v2Of(6)),
   },
+  {
+    id: "sharpshooter",
+    name: "Sharpshooter",
+    desc: "Land 25 hits in one match",
+    target: 25,
+    xp: 500,
+  },
+  { id: "top3_ffa", name: "Top Three", desc: "Finish in the top 3 in FFA", target: 1, xp: 300 },
+  { id: "streak", name: "Hot Streak", desc: "Win 3 matches in a row", target: 3, xp: 1500 },
+  { id: "tdm_wins", name: "Team Victory", desc: "Win 5 TDM matches", target: 5, xp: 1200 },
+  {
+    id: "tdm_slayer",
+    name: "Team Slayer",
+    desc: "Get 10 kills in one TDM match",
+    target: 10,
+    xp: 800,
+  },
+  { id: "ffa_champ", name: "FFA Champion", desc: "Win 10 FFA matches", target: 10, xp: 2000 },
+  { id: "spender", name: "Big Spender", desc: "Buy a car in the garage", target: 1, xp: 500 },
+  {
+    id: "hoarder",
+    name: "Power Hoarder",
+    desc: "Collect 30 power-ups in total",
+    target: 30,
+    xp: 1000,
+  },
+  { id: "race_win", name: "Race Winner", desc: "Win a Race", target: 1, xp: 600 },
+  {
+    id: "nitro_hunter",
+    name: "Nitro Hunter",
+    desc: "Collect 5 nitro pickups in one Race",
+    target: 5,
+    xp: 400,
+  },
+  {
+    id: "close_calls",
+    name: "Close Calls",
+    desc: "Get 15 near misses in one Race",
+    target: 15,
+    xp: 500,
+  },
+  {
+    id: "clean_driver",
+    name: "Clean Driver",
+    desc: "Finish a Race without blowing up",
+    target: 1,
+    xp: 700,
+  },
+  {
+    id: "time_lord",
+    name: "Time Lord",
+    desc: "Use Time Freeze 3 times",
+    target: 3,
+    xp: 1000,
+    ok: (o) => o.includes(v2Of(1)),
+  },
+  {
+    id: "ghost_walker",
+    name: "Ghost Walker",
+    desc: "Use the Phantom cloak 3 times",
+    target: 3,
+    xp: 1000,
+    ok: (o) => o.includes(v2Of(5)),
+  },
+  {
+    id: "fortress",
+    name: "Fortress",
+    desc: "Use the Aegis shield 3 times",
+    target: 3,
+    xp: 1000,
+    ok: (o) => o.includes(v2Of(6)),
+  },
   { id: "rampage", name: "Rampage", desc: "Get 8 kills in one FFA match", target: 8, xp: 2500 },
 ];
 export const defOf = (id: string) => DEFS.find((d) => d.id === id);
@@ -192,6 +264,8 @@ function add(id: string, n = 1) {
 /* ---------- match events (called from the game) ---------- */
 const ms = {
   ffa: false,
+  tdm: false,
+  hits: 0,
   kills: 0,
   pickups: 0,
   blocks: 0,
@@ -205,6 +279,8 @@ const ms = {
 export function mStart(mode: "ffa" | "tdm" | "race", car: number) {
   Object.assign(ms, {
     ffa: mode === "ffa",
+    tdm: mode === "tdm",
+    hits: 0,
     kills: 0,
     pickups: 0,
     blocks: 0,
@@ -231,11 +307,16 @@ export function mKill(o: {
     set("hat_trick", ms.kills);
     set("rampage", ms.kills);
   }
+  if (ms.tdm) set("tdm_slayer", ms.kills);
   if (o.victimV2) add("kill_v2");
   if (o.frozen && o.byFreeze) add("frostbite");
   if (o.ghost) set("ghost", ++ms.ghost);
 }
+export function mHit() {
+  set("sharpshooter", ++ms.hits);
+}
 export function mPickup() {
+  add("hoarder");
   set("pickups", ++ms.pickups);
 }
 export function mBlock() {
@@ -245,6 +326,8 @@ export const mDamage = () => {
   ms.dmg = true;
 };
 export const mPower = (kind: string) => {
+  const use = { freeze: "time_lord", ghost: "ghost_walker", shield: "fortress" }[kind];
+  if (use) add(use);
   if (kind === "ghost") ms.ghost = 0; // "during one cloak" starts counting from zero each time
 };
 export function mBehind(n: number) {
@@ -264,7 +347,28 @@ export function mEnd(o: {
   won: boolean;
   top3?: boolean;
   hpFrac?: number;
+  position?: number;
+  race?: { nitros: number; near: number; blasts: number };
 }) {
+  let run = 0;
+  try {
+    run = o.won ? (Number(localStorage.getItem("lcs.streak")) || 0) + 1 : 0;
+    localStorage.setItem("lcs.streak", String(run));
+  } catch {
+    run = o.won ? 1 : 0;
+  }
+  if (run) set("streak", run);
+  if (o.mode === "ffa") {
+    if ((o.position ?? 99) <= 3) add("top3_ffa");
+    if (o.won) add("ffa_champ");
+  }
+  if (o.mode === "tdm" && o.won) add("tdm_wins");
+  if (o.mode === "race" && o.race) {
+    if (o.won) add("race_win");
+    set("nitro_hunter", o.race.nitros);
+    set("close_calls", o.race.near);
+    if (o.race.blasts === 0) add("clean_driver");
+  }
   add("warm_up");
   add("road_warrior");
   if (o.won) add("veteran");
@@ -273,7 +377,10 @@ export function mEnd(o: {
   if (o.mode === "tdm" && o.won && ms.behind >= 20) add("comeback");
   if (o.mode === "ffa" && o.won && !ms.dmg) add("untouchable");
 }
-export const mBuy = () => set("collector", ownedV2());
+export const mBuy = () => {
+  set("collector", ownedV2());
+  add("spender");
+};
 
 /** live missions for the UI */
 export function useMissions() {

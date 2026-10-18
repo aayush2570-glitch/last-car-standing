@@ -130,7 +130,12 @@ export function RaceMode({
         shown = true;
         setRes(view.result);
         addXp(view.result.xp);
-        mEnd({ mode: "race", won: view.result.pos === 1, top3: view.result.pos <= 3 });
+        mEnd({
+          mode: "race",
+          won: view.result.pos === 1,
+          top3: view.result.pos <= 3,
+          race: { nitros: view.result.nitros, near: view.result.near, blasts: view.result.blasts },
+        });
       }
       if (view2?.result && !shown2) {
         shown2 = true;

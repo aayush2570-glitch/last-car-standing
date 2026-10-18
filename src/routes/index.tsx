@@ -49,6 +49,7 @@ import {
   mBuy,
   mDamage,
   mEnd,
+  mHit,
   mKill,
   mPickup,
   mPower,
@@ -800,6 +801,7 @@ function ArenaGame() {
       mEnd({
         mode: tdm ? "tdm" : "ffa",
         won,
+        position,
         hpFrac: pl && pl.alive ? pl.hp / carAt(pl.carId).hp : 1,
       });
       addXp(xp);
@@ -1570,6 +1572,7 @@ function ArenaGame() {
             continue;
           if (tdm && (v.team === b.owner.team || (v.inv ?? 0) > 0)) continue; // no friendly fire, spawn shield
           const target = carAt(v.carId);
+          if (b.owner === p) mHit();
           chargeUp(b.owner); // a clean hit, whether or not a shield soaks it
           if (powerOn(v, "shield") && Math.random() >= SHIELD_LEAK) {
             b.life = 0;
