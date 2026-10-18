@@ -50,7 +50,7 @@ function getProps() {
  * Only plain hex colours and basic canvas calls are used (Chrome 109 safe).
  */
 
-export const LEN = 22000;
+export const LEN = 40000;
 export const HALF = 320;
 const N = 8;
 const FIRE = 1.38; // speed multiplier while nitro burns
@@ -63,6 +63,33 @@ const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 const hs = (i: number, s: number) => {
   const h = Math.imul(i * 31 + s * 17 + 5, 2654435761);
   return (((h ^ (h >>> 15)) >>> 0) % 1000) / 1000;
+};
+
+/**
+ * Camera heading along the track (radians, 0 = the road runs up the screen). The view turns so that some
+ * stretches run left-to-right, some downwards and some right-to-left, while the physics stay in plain
+ * "track space": steering is always the car's own left and right.
+ */
+const HEADS: [number, number][] = [
+  [0, 0],
+  [4500, 90],
+  [8500, 180],
+  [12500, 90],
+  [16000, 0],
+  [20000, -90],
+  [24000, 0],
+  [27500, 90],
+  [31500, 180],
+  [35000, 0],
+];
+const TURN = 1000; // track distance a turn takes
+export const headAt = (d: number): number => {
+  let k = 0;
+  for (let i = 1; i < HEADS.length; i++) if (d >= (HEADS[i] as [number, number])[0]) k = i;
+  const [d0, a1] = HEADS[k] as [number, number];
+  const a0 = k ? (HEADS[k - 1] as [number, number])[1] : a1;
+  const u = clamp((d - d0) / TURN, 0, 1);
+  return ((a0 + (a1 - a0) * (u * u * (3 - 2 * u))) * Math.PI) / 180;
 };
 
 /** Road centre line: gentle S-bends, dead straight on the starting grid. */
@@ -352,7 +379,7 @@ export class Race {
         y: 90 + Math.floor(s / 3) * 150,
         v: 0,
         vx: 0,
-        maxV: bot ? base * rnd(0.95, 1.01) : base,
+        maxV: bot ? base * rnd(0.98, 1.03) : base,
         fire: false,
         nitro: 0,
         want: false,
@@ -361,7 +388,7 @@ export class Race {
         inv: 0,
         slip: 0,
         bot,
-        skill: rnd(0.7, 0.97),
+        skill: rnd(0.82, 1),
         lane: 0,
         think: Math.random() * 0.1,
         fin: 0,
@@ -557,7 +584,7 @@ export class Race {
     }
     let cap = c.maxV * (c.fire ? FIRE : 1);
     if (c.fin) cap = c.maxV * 0.45;
-    else if (c.bot) cap *= clamp(1 - (this.leadY() - c.y) * 0.00012, 0.93, 1.07);
+    else if (c.bot) cap *= clamp(1 - (this.leadY() - c.y) * 0.00014, 0.95, 1.09);
     const acc = c.fire ? 340 : 150 + 240 * Math.max(0, 1 - c.v / c.maxV);
     c.v = c.v < cap ? Math.min(cap, c.v + acc * dt) : Math.max(cap, c.v - 300 * dt);
     c.top = Math.max(c.top, c.v);
@@ -758,10 +785,10 @@ export class Race {
   private ai(c: Racer, dt: number) {
     c.think -= dt;
     if (c.think <= 0) {
-      c.think = 0.09 + Math.random() * 0.08;
+      c.think = 0.06 + Math.random() * 0.05;
       const car = carAt(c.id);
       const rx = roadX(c.y);
-      const look = (90 + c.v * 0.6) * (0.55 + 0.5 * c.skill);
+      const look = (100 + c.v * 0.7) * (0.6 + 0.5 * c.skill);
       const near = this.obs.filter(
         (o) =>
           o.gone === 0 &&
@@ -802,7 +829,7 @@ export class Race {
       }
       c.lane = bl;
       const risky = near.filter((o) => o.kind !== "cone" && o.kind !== "oil").length;
-      c.want = (c.nitro > 0.35 && risky === 0) || c.nitro > 0.95;
+      c.want = (c.nitro > 0.25 && risky === 0) || c.nitro > 0.9;
     }
     return clamp((c.lane - c.x) / 70, -1, 1);
   }
@@ -1489,10 +1516,36 @@ export class RaceView {
     this.lastNow = t;
     const sc = Math.min(H / 980, W / 860) * this.zoom;
     const [sx, sy] = fx.offset();
-    const top = me.y - (H * 0.72) / sc - 80,
-      bot = me.y + (H * 0.28) / sc + 80;
-    const L = this.camX - W / 2 / sc - 40,
-      Rt = this.camX + W / 2 / sc + 40;
+    // the view turns with the track; the car sits behind the middle of the screen, looking ahead
+    const hd = headAt(-me.y);
+    const hc = Math.cos(hd),
+      hn = Math.sin(hd);
+    const back = 0.22 * (Math.abs(hc) * H + Math.abs(hn) * W);
+    const ax = W / 2 - hn * back,
+      ay = H / 2 + hc * back;
+    let top = 1e9,
+      bot = -1e9,
+      L = 1e9,
+      Rt = -1e9;
+    for (const [qx, qy] of [
+      [0, 0],
+      [W, 0],
+      [W, H],
+      [0, H],
+    ] as [number, number][]) {
+      const dx = qx - ax,
+        dy = qy - ay;
+      const wx = this.camX + (dx * hc + dy * hn) / sc,
+        wy = me.y + (-dx * hn + dy * hc) / sc;
+      top = Math.min(top, wy);
+      bot = Math.max(bot, wy);
+      L = Math.min(L, wx);
+      Rt = Math.max(Rt, wx);
+    }
+    top -= 80;
+    bot += 80;
+    L -= 40;
+    Rt += 40;
     const ratio = me.v / (me.maxV * FIRE);
     const react = (y: number) => {
       let g = 0,
@@ -1511,7 +1564,8 @@ export class RaceView {
     ctx.fillStyle = zoneAt(me.y).ground;
     ctx.fillRect(0, 0, W, H);
     ctx.save();
-    ctx.translate(W / 2 + sx, H * 0.72 + sy);
+    ctx.translate(ax + sx, ay + sy);
+    ctx.rotate(hd);
     ctx.scale(sc, sc);
     ctx.translate(-this.camX, -me.y);
 
@@ -2297,6 +2351,10 @@ export class RaceView {
       if (spriteReady(img)) ctx.drawImage(img, -car.w / 2, -car.h / 2, car.w, car.h);
       else drawFallbackCar(ctx, car, car.w, car.h);
       ctx.restore();
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(-hd);
+      ctx.translate(-c.x, -c.y);
       if (c === me) {
         ctx.fillStyle = PAL.yellow;
         ctx.fillRect(c.x - 17, c.y - 70, 34, 16);
@@ -2315,6 +2373,7 @@ export class RaceView {
         ctx.textBaseline = "middle";
         ctx.fillText(c === R.me ? "P1" : "P2", c.x, c.y - 61);
       }
+      ctx.restore();
     }
     fx.draw(ctx);
     ctx.restore();
