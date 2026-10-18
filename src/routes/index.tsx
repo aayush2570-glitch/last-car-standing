@@ -271,7 +271,7 @@ const bulletCol = (tdm: boolean, o: Vehicle) =>
 const TARGETS = 7;
 const CAR_RADIUS = 27;
 /** bots drive with the same physics as the player; this scales their top speed (1 = same as player) */
-const BOT_SPEED = 0.95;
+const BOT_SPEED = 0.988;
 const POWER_KINDS: PowerKind[] = ["health", "speed", "double"];
 const POWER_COLOR: Record<PowerKind, string> = {
   health: "#3dff7a",
@@ -1370,8 +1370,8 @@ function ArenaGame() {
         }
         // lead the shot: aim where the target will be when the bullet arrives
         const leadT = Math.min(1.1, foeDist / 400);
-        const aimX = foe.x + (foe.vx ?? 0) * leadT * 0.9,
-          aimY = foe.y + (foe.vy ?? 0) * leadT * 0.9;
+        const aimX = foe.x + (foe.vx ?? 0) * leadT * 1,
+          aimY = foe.y + (foe.vy ?? 0) * leadT * 1;
         const aimAng = Math.atan2(aimX - bot.x, -(aimY - bot.y));
         const distance = pu ? puD : foeDist;
         const desired = pu ? Math.atan2(pu.x - bot.x, -(pu.y - bot.y)) : aimAng;
@@ -1404,7 +1404,7 @@ function ArenaGame() {
           }
           if (urgent < 99) {
             // not perfect: ~12% of the time a bot reacts too late
-            if (Math.random() < 0.88) bot.dodgeT = 0.5;
+            if (Math.random() < 0.93) bot.dodgeT = 0.5;
             else bot.react = 0.35;
           }
         }
@@ -1432,7 +1432,7 @@ function ArenaGame() {
           if (!pu && foeDist < 300) speedMul = 0.3; // close in: tap forward while lining up the shot
         }
         const turn = wrapAng(heading - bot.angle);
-        bot.angle += turn * Math.min(1, dt * 4.4);
+        bot.angle += turn * Math.min(1, dt * 5);
         const bSpeed =
           me.speed * 2.15 * BOT_SPEED * (1 + 0.08 * aid) * speedMul * (bot.speedT > 0 ? 1.6 : 1);
         bot.x += Math.sin(bot.angle) * bSpeed * dt;
@@ -1463,7 +1463,7 @@ function ArenaGame() {
           Math.abs(wrapAng(aimAng - bot.angle)) < tol
         ) {
           // like the player, bots fire in the direction the car is facing
-          const aim = bot.angle + (Math.random() - 0.5) * (0.05 + 0.1 * Math.max(0, -aid));
+          const aim = bot.angle + (Math.random() - 0.5) * (0.035 + 0.1 * Math.max(0, -aid));
           const mx = bot.x + Math.sin(aim) * (me.h * 0.57),
             my = bot.y - Math.cos(aim) * (me.h * 0.57);
           for (const off of bot.dblT > 0 ? [-9, 9] : [0]) {
@@ -1474,11 +1474,11 @@ function ArenaGame() {
               vy: -Math.cos(aim) * 400,
               owner: bot,
               life: 2.5,
-              damage: 5.3 * (1 + 0.15 * aid),
+              damage: 5.6 * (1 + 0.15 * aid),
             });
           }
           bot.cooldown =
-            (Math.max(0.42, shotInterval(me) * 1.6) + Math.random() * 0.4) * (1 - 0.22 * aid);
+            (Math.max(0.36, shotInterval(me) * 1.4) + Math.random() * 0.3) * (1 - 0.22 * aid);
           fx.muzzle(mx, my, aim, tdm ? bulletCol(true, bot) : PAL.hostile);
         }
       }
