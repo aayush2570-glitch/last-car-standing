@@ -13,6 +13,8 @@ import { Race, RaceView, type RaceResult } from "./race";
 import type { Sfx } from "./fx";
 import { addXp } from "./xp";
 import { mEnd, mStart } from "./missions";
+import { useControlPrefs, useDevice } from "./device";
+import { ControlSettings, RotateOverlay } from "./TouchControls";
 
 type Props = {
   carIndex: number;
@@ -44,6 +46,9 @@ export function RaceMode({
   onToggleMute,
   onExit,
 }: Props) {
+  const dev = useDevice();
+  const ctl = useControlPrefs();
+  const touchUi = dev.input === "touch";
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvas2Ref = useRef<HTMLCanvasElement>(null);
   const twoRef = useRef(twoP);
@@ -171,6 +176,17 @@ export function RaceMode({
   const modalOpen =
     (paused && !(res && (!twoP || res2))) || (twoP && !!res && !!res2) || (!twoP && !!res);
 
+  // a touch device held upright: pause the race and ask for landscape
+  const needRotate = touchUi && !dev.landscape && !res;
+  useEffect(() => {
+    if (needRotate && !pausedRef.current) {
+      pausedRef.current = true;
+      setPaused(true);
+      sfx.stopMusic();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needRotate]);
+
   const hold = (side: "l" | "r" | "n") => ({
     onPointerDown: (e: React.PointerEvent) => {
       e.preventDefault();
@@ -184,7 +200,10 @@ export function RaceMode({
   });
 
   return (
-    <div className={`race-root ${twoP ? "two" : ""} ${modalOpen ? "modal-open" : ""}`}>
+    <div
+      className={`race-root input-${dev.input} ${ctl.lefty ? "lefty" : ""} ${dev.short ? "short" : ""} ${twoP ? "two" : ""} ${modalOpen ? "modal-open" : ""}`}
+      style={{ "--tc": ctl.size } as React.CSSProperties}
+    >
       <canvas ref={canvasRef} className="arena-canvas race-c1" aria-label="Speed race" />
       {twoP && (
         <canvas
@@ -267,7 +286,7 @@ export function RaceMode({
           <button type="button" className="steer-btn nitro-btn" aria-label="Nitro" {...hold("n")}>
             <Zap size={34} />
           </button>
-          <p className="race-tip">
+          <p className="race-tip" hidden={touchUi}>
             ← → / A D STEER · HOLD SPACE FOR NITRO · GRAB BLUE CANISTERS · MINES & TRUCKS BLOW YOU
             UP
           </p>
@@ -280,6 +299,7 @@ export function RaceMode({
               <span>PAUSED</span>
             </div>
             <div className="win-body center">
+              {touchUi && <ControlSettings prefs={ctl} />}
               <button type="button" className="arcade-btn start-btn" onClick={togglePause}>
                 <Play size={16} /> RESUME
               </button>
@@ -415,6 +435,7 @@ export function RaceMode({
           </div>
         </div>
       )}
+      {needRotate && <RotateOverlay />}
     </div>
   );
 }

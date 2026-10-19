@@ -57,6 +57,8 @@ import {
 } from "@/game/missions";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
 import { RaceMode } from "@/game/RaceMode";
+import { enterLandscape, useControlPrefs, useDevice } from "@/game/device";
+import { ControlSettings, RotateOverlay, TouchControls, type Joy } from "@/game/TouchControls";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -391,6 +393,12 @@ function twoResult(g: Game): TwoRes {
 function ArenaGame() {
   const [selected, setSelected] = useState(0);
   const wallet = useWallet();
+  const dev = useDevice();
+  const ctl = useControlPrefs();
+  const joyRef = useRef<Joy>({ x: 0, y: 0, on: false });
+  const devRef = useRef(dev);
+  devRef.current = dev;
+  const touchUi = dev.input === "touch";
   const [notice, setNotice] = useState("");
   const noticeT = useRef<ReturnType<typeof setTimeout> | null>(null);
   const say = useCallback((m: string) => {
@@ -581,6 +589,7 @@ function ArenaGame() {
       ...(player2 ? { hp2: player2.hp, kills2: 0 } : null),
     });
     setPaused(false);
+    if (devRef.current.input === "touch") void enterLandscape();
     setModeSync("playing");
     sfxRef.current.blip();
   }, [setModeSync]);
@@ -768,6 +777,7 @@ function ArenaGame() {
     sfxRef.current.blip();
   };
   raceRef.current = () => {
+    if (devRef.current.input === "touch") void enterLandscape();
     setAsk(false);
     keysRef.current.clear();
     sfxRef.current.blip();
@@ -1243,13 +1253,24 @@ function ArenaGame() {
       const drive = (h: Vehicle, ctl: Ctl) => {
         if (!h.alive || g.over || h.frz) return;
         const stats = carAt(h.carId);
-        const forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
-        const side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
+        let forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
+        let side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
+        // touch joystick (single player): the stick points where the car should go, a light push = slower
+        let push = 1;
+        const joy = joyRef.current;
+        if (h === p && !g.player2 && joy.on) {
+          const mag = Math.hypot(joy.x, joy.y);
+          if (mag > 0.16) {
+            forward = -joy.y;
+            side = joy.x;
+            push = 0.45 + 0.55 * Math.min(1, mag);
+          }
+        }
         if (forward || side) {
           const target = Math.atan2(side, -forward);
           const delta = ((target - h.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           h.angle += delta * Math.min(1, dt * 4.2);
-          const pSpeed = stats.speed * 2.15 * (h.speedT > 0 ? 1.6 : 1);
+          const pSpeed = stats.speed * 2.15 * (h.speedT > 0 ? 1.6 : 1) * push;
           h.x += Math.sin(h.angle) * pSpeed * dt;
           h.y -= Math.cos(h.angle) * pSpeed * dt;
           h.trail -= dt;
@@ -2427,9 +2448,22 @@ function ArenaGame() {
     pausedRef.current = v;
     setPaused(v);
   };
+  // a touch device held upright: pause the match and ask for landscape
+  const needRotate = mode === "playing" && touchUi && !dev.landscape;
+  useEffect(() => {
+    if (needRotate && !pausedRef.current) {
+      pausedRef.current = true;
+      setPaused(true);
+    }
+  }, [needRotate]);
 
   return (
-    <main className="game-shell">
+    <main
+      className="game-shell"
+      data-input={dev.input}
+      data-orient={dev.landscape ? "landscape" : "portrait"}
+      data-short={dev.short ? "1" : "0"}
+    >
       <section className={`arena-stage mode-${mode}`} aria-label="Car combat arena" style={vars}>
         <canvas ref={canvasRef} className="arena-canvas" aria-label="Live car combat arena" />
         <div className="crt" aria-hidden="true" />
@@ -3114,56 +3148,26 @@ function ArenaGame() {
               </div>
             </div>
             <div className="hud-bottom">
-              <div className="key-hints">
-                <span>
-                  <kbd>W</kbd>
-                  <kbd>A</kbd>
-                  <kbd>S</kbd>
-                  <kbd>D</kbd> DRIVE
-                </span>
-                <span>
-                  <kbd>5</kbd>
-                  <kbd>SPACE</kbd> FIRE
-                </span>
-                <span>
-                  <kbd>ESC</kbd> PAUSE
-                </span>
-              </div>
-              <div className="mobile-controls">
-                <div className="dpad">
-                  <button type="button" className="pad-key pad-up" aria-label="Up" {...hold("w")}>
-                    ▲
-                  </button>
-                  <button
-                    type="button"
-                    className="pad-key pad-left"
-                    aria-label="Left"
-                    {...hold("a")}
-                  >
-                    ◀
-                  </button>
-                  <button
-                    type="button"
-                    className="pad-key pad-down"
-                    aria-label="Down"
-                    {...hold("s")}
-                  >
-                    ▼
-                  </button>
-                  <button
-                    type="button"
-                    className="pad-key pad-right"
-                    aria-label="Right"
-                    {...hold("d")}
-                  >
-                    ▶
-                  </button>
+              {!touchUi && (
+                <div className="key-hints">
+                  <span>
+                    <kbd>W</kbd>
+                    <kbd>A</kbd>
+                    <kbd>S</kbd>
+                    <kbd>D</kbd> DRIVE
+                  </span>
+                  <span>
+                    <kbd>5</kbd>
+                    <kbd>SPACE</kbd> FIRE
+                  </span>
+                  <span>
+                    <kbd>ESC</kbd> PAUSE
+                  </span>
                 </div>
-                <button type="button" className="arcade-btn mobile-fire" {...hold("5")}>
-                  <Crosshair size={18} /> FIRE
-                </button>
-              </div>
+              )}
             </div>
+            {touchUi && !paused && <TouchControls joy={joyRef} keys={keysRef} prefs={ctl} />}
+            {needRotate && <RotateOverlay />}
             {hud.tdm && hud.tdm.respawn > 0 && !paused && (
               <div className="respawn-banner" role="status">
                 <span>ELIMINATED · RESPAWNING ON YOUR BASE</span>
@@ -3182,6 +3186,7 @@ function ArenaGame() {
                       <br />
                       <em>PAUSED</em>
                     </h2>
+                    {touchUi && <ControlSettings prefs={ctl} />}
                     <button type="button" className="arcade-btn start-btn" onClick={togglePause}>
                       <Play size={16} /> RESUME
                     </button>
