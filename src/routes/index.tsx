@@ -1267,7 +1267,7 @@ function ArenaGame() {
           }
         }
         if (forward || side) {
-          const target = Math.atan2(side, -forward);
+          const target = Math.atan2(side, forward); // up = 0 (the car faces up when angle is 0)
           const delta = ((target - h.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           h.angle += delta * Math.min(1, dt * 4.2);
           const pSpeed = stats.speed * 2.15 * (h.speedT > 0 ? 1.6 : 1) * push;
