@@ -187,6 +187,14 @@ export const DEFS: Def[] = [
     xp: 1000,
     ok: (o) => o.includes(v2Of(6)),
   },
+  {
+    id: "turret_master",
+    name: "Turret Master",
+    desc: "Use the Military Jeep auto turret 3 times",
+    target: 3,
+    xp: 1000,
+    ok: (o) => o.includes(v2Of(2)),
+  },
   { id: "rampage", name: "Rampage", desc: "Get 8 kills in one FFA match", target: 8, xp: 2500 },
 ];
 export const defOf = (id: string) => DEFS.find((d) => d.id === id);
@@ -326,7 +334,12 @@ export const mDamage = () => {
   ms.dmg = true;
 };
 export const mPower = (kind: string) => {
-  const use = { freeze: "time_lord", ghost: "ghost_walker", shield: "fortress" }[kind];
+  const use = {
+    freeze: "time_lord",
+    ghost: "ghost_walker",
+    shield: "fortress",
+    turret: "turret_master",
+  }[kind];
   if (use) add(use);
   if (kind === "ghost") ms.ghost = 0; // "during one cloak" starts counting from zero each time
 };

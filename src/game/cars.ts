@@ -327,11 +327,14 @@ export const isV2 = (id: number): boolean => id >= cars.length;
 /** base car index for any car id (v1 ids map to themselves) */
 export const baseOf = (id: number): number =>
   isV2(id) ? ((v2Cars[id - cars.length] as Car).base as number) : id;
-/** v1 → maybe v2 (used for bots, which now and then show up with an upgraded car) */
-export const rollV2 = (id: number): number => {
-  const v = v2Of(id);
-  return v >= 0 && Math.random() < BOT_V2_CHANCE ? v : id;
-};
+/**
+ * Bot car roll: every bot has a flat BOT_V2_CHANCE (5%) of showing up with a v2 form, and when it
+ * does, the v2 is picked evenly from ALL v2 cars (Redline, Phantom, Blue Turret, Military Jeep...).
+ * Otherwise it keeps the v1 car it was given. (The old roll only upgraded the car it was handed, so
+ * the real chance of any v2 was lower and uneven between cars.)
+ */
+export const rollV2 = (id: number, rnd: () => number = Math.random): number =>
+  v2Cars.length > 0 && rnd() < BOT_V2_CHANCE ? cars.length + Math.floor(rnd() * v2Cars.length) : id;
 export const abilityOf = (id: number): AbilityInfo | null => {
   const a = allCars[id]?.ability;
   return a ? ABILITIES[a] : null;
