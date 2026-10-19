@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/pwa.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "build:itch": "vite build && node scripts/package-itch.mjs"
+    "build:itch": "vite build && node scripts/pwa.mjs && node scripts/package-itch.mjs"
   },
   "overrides": {
     "rolldown": "1.2.1"

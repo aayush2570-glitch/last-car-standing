@@ -77,6 +77,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { name: "theme-color", content: "#0b0620" },
+      { name: "mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-capable", content: "yes" },
+      { name: "apple-mobile-web-app-title", content: "Car Standing" },
       { title: "Lovable App" },
       { name: "description", content: "Lovable Generated Project" },
       { name: "author", content: "Lovable" },
@@ -92,6 +96,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "manifest", href: "./manifest.webmanifest" },
+      { rel: "apple-touch-icon", href: "./icons/apple-touch-icon.png" },
     ],
   }),
   shellComponent: RootShell,
@@ -116,6 +122,22 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  // offline support: the service worker caches the whole game after the first visit
+  useEffect(() => {
+    if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return undefined;
+    const reg = () => {
+      navigator.serviceWorker.register("./sw.js").catch(() => {
+        /* blocked (private mode, sandboxed iframe...): the game just stays online-only */
+      });
+    };
+    if (document.readyState === "complete") {
+      reg();
+      return undefined;
+    }
+    window.addEventListener("load", reg, { once: true });
+    return () => window.removeEventListener("load", reg);
+  }, []);
 
   return (
     <QueryClientProvider client={queryClient}>

@@ -1,0 +1,16 @@
+{
+  "name": "Last Car Standing",
+  "short_name": "Car Standing",
+  "description": "Choose your ride and fight to survive in a top-down car combat arena. Plays offline.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["fullscreen", "standalone"],
+  "background_color": "#0b0620",
+  "theme_color": "#0b0620",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

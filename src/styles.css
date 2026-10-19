@@ -2,6 +2,10 @@
 @source "../src";
 @import "tw-animate-css";
 
+/* Fonts are bundled (not loaded from Google) so the game looks right offline. SIL Open Font License. */
+@font-face { font-family: "VT323"; font-style: normal; font-weight: 400; font-display: swap; src: url("./assets/fonts/vt323-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Press Start 2P"; font-style: normal; font-weight: 400; font-display: swap; src: url("./assets/fonts/press-start-2p-latin-400-normal.woff2") format("woff2"); }
+
 @custom-variant dark (&:is(.dark *));
 
 /*
