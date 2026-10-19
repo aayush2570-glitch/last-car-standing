@@ -574,3 +574,77 @@ html, body { overscroll-behavior: none; }
 .race-root.input-touch.lefty .steer-btn.left { left: auto; right: calc(var(--edgeR) + var(--sb) + 14px); }
 .race-root.input-touch.lefty .steer-btn.right { left: auto; right: var(--edgeR); }
 .race-root.input-touch.lefty .steer-btn.nitro-btn { right: auto; left: var(--edge); }
+
+/* ───────── short landscape screens (phones): the whole garage must fit without scrolling ───────── */
+@media (max-height: 520px) and (orientation: landscape) {
+  .game-shell, .arena-stage { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+  .top-bar { padding: 6px calc(env(safe-area-inset-right, 0px) + 12px) 0 calc(env(safe-area-inset-left, 0px) + 12px); }
+  .logo { flex-direction: row; align-items: baseline; gap: 8px; }
+  .logo-a { font-size: 9px; }
+  .logo-b { font-size: 15px; text-shadow: 2px 2px 0 #ff2bd6, 3px 3px 0 #000; }
+  .top-right { gap: 8px; }
+  .credit { font-size: 16px; }
+  .msn-btn { top: 6px; padding: 6px 10px; font-size: 8px; box-shadow: 0 3px 0 #000; }
+  .garage { padding: 44px calc(env(safe-area-inset-right, 0px) + 12px) calc(env(safe-area-inset-bottom, 0px) + 6px) calc(env(safe-area-inset-left, 0px) + 12px); gap: 6px; overflow-y: auto; }
+  .garage-main { grid-template-columns: minmax(150px, 215px) minmax(0, 1fr) minmax(130px, 175px); gap: 8px; }
+  .spec-panel .win-title, .garage-strip .win-title { display: none; }
+  .spec-panel .win-body { padding: 6px 8px; }
+  .car-name { font-size: 11px; }
+  .rank-badge { width: 26px; height: 26px; font-size: 12px; }
+  .car-model { margin: 2px 0 5px; font-size: 15px; }
+  .stat-list { gap: 3px; }
+  .stat-row { grid-template-columns: 64px 1fr 30px; gap: 4px; }
+  .stat-label { font-size: 14px; }
+  .stat-num { font-size: 16px; }
+  .segs i { height: 8px; border-bottom-width: 2px; }
+  .ovr-line { margin-top: 5px; padding-top: 4px; font-size: 15px; }
+  .ovr-line b { font-size: 12px; }
+  .ability-line { margin: 0 0 5px; padding: 4px 6px; font-size: 14px; }
+  .ability-line b { font-size: 8px; }
+  .ability-line span { display: none; }
+  .showcase { min-height: 0; }
+  .nav-arrow { width: 34px; height: 40px; margin-top: -20px; }
+  .showcase-count { font-size: 15px; padding: 2px 8px; }
+  .ver-toggle button { min-width: 44px; padding: 5px 7px; font-size: 8px; }
+  .action-panel { gap: 6px; padding-bottom: 0; }
+  .action-panel .arcade-btn { padding: 8px 8px; font-size: 10px; }
+  .action-panel .entry-note, .action-panel .key-tip { display: none; }
+  .tiles { padding: 4px 6px; gap: 6px; }
+  .tile { flex: 1 0 70px; padding: 12px 4px 4px; }
+  .tile-art { height: 40px; }
+  .tile-art img { max-height: 38px; }
+  .tile-name { font-size: 13px; }
+  .tile-rank { display: none; }
+  .tile-index { font-size: 12px; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .garage { padding-top: 40px; gap: 4px; }
+  .garage-strip .win-body { padding: 0; }
+  .tile { padding: 10px 3px 3px; gap: 1px; }
+  .tile-art { height: 34px; }
+  .tile-art img { max-height: 32px; }
+  .tile-name { font-size: 12px; }
+}
+@media (max-height: 520px) and (orientation: landscape) {
+  .tiles { scrollbar-width: none; }
+  .tiles::-webkit-scrollbar { height: 0; display: none; }
+}
+@media (max-height: 380px) and (orientation: landscape) {
+  .tiles { padding: 2px 6px; }
+  .tile-art { height: 28px; }
+  .tile-art img { max-height: 26px; }
+  .tile-index { display: none; }
+  .stat-list { gap: 2px; }
+  .ability-line { display: none; }
+}
+/* undo the stacked (tablet/portrait) garage rules for short landscape screens: three columns again */
+@media (max-height: 520px) and (orientation: landscape) {
+  .garage { position: absolute; inset: 0; min-height: 0; }
+  .garage-main { grid-template-rows: none; }
+  .showcase { order: 0; height: auto; }
+  .spec-panel { align-self: start; }
+  .action-panel { flex-direction: column; flex-wrap: nowrap; align-self: end; }
+  .action-panel .arcade-btn { flex: none; }
+  .garage.two { flex-direction: row; padding-top: 40px; }
+  .garage.two > .half-0 { border-right: 3px solid #2ef2ff; border-bottom: 0; }
+}
