@@ -1971,6 +1971,18 @@ function ArenaGame() {
             ctx.fillStyle = mineCol;
             ctx.fillRect(m.x + Math.cos(a) * 15 - 2, m.y + Math.sin(a) * 15 - 2, 4, 4);
           }
+          /* label the viewer's own mines "YOURS" so two Redline v2s in a match can't be confused */
+          const viewer = pi === 1 ? g.player2 : g.player;
+          if (viewer && m.owner === viewer && !m.used) {
+            ctx.font = '10px "Press Start 2P", monospace';
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = "#1b1030";
+            ctx.strokeText("YOURS", m.x, m.y - 28);
+            ctx.fillStyle = "#3bff9d";
+            ctx.fillText("YOURS", m.x, m.y - 28);
+          }
         }
         for (const q of g.powerups) {
           const col = POWER_COLOR[q.kind];
