@@ -26,7 +26,10 @@ import {
   spriteReady,
   type Car,
   FREEZE_RADIUS,
-  SHIELD_LEAK,
+  MINE_RADIUS,
+  MINE_ARM,
+  MINE_MAX,
+  MINE_BLUNDER,
   TURRET_MOUNT,
   TURRET_W,
   TURRET_PIVOT_Y,
@@ -45,7 +48,7 @@ import { MissionToasts, MissionsButton } from "@/game/MissionsUI";
 import {
   mAlive,
   mBehind,
-  mBlock,
+  mMine,
   mBuy,
   mDamage,
   mEnd,
@@ -130,6 +133,16 @@ type Vehicle = {
   tur?: number;
   tcd?: number;
 };
+/** Redline v2 Magnetic Splash landmine: lies on the ground until an enemy touches it (one kill, then it is spent) */
+type Mine = {
+  x: number;
+  y: number;
+  owner: Vehicle;
+  age: number;
+  used: boolean;
+  /** per-bot "did it notice this mine?" roll, so a bot can (rarely) blunder onto one */
+  seen: Map<Vehicle, boolean>;
+};
 type PowerKind = "health" | "speed" | "double";
 type Powerup = { x: number; y: number; kind: PowerKind; life: number };
 type Projectile = {
@@ -171,6 +184,7 @@ type Game = {
   player: Vehicle;
   cars: Vehicle[];
   bullets: Projectile[];
+  mines: Mine[];
   started: number;
   lastHud: number;
   kills: number;
@@ -301,7 +315,7 @@ const NUMPAD: Record<string, string> = {
 };
 const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
 /** is this car's v2 power (of the given kind) running right now? */
-const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "shield" | "turret") =>
+const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "mine" | "turret") =>
   (v.abT ?? 0) > 0 && abilityOf(v.carId)?.kind === kind;
 const fmtXp = (n: number) => n.toLocaleString("en-US");
 const P1_COLOR = "56,160,255";
@@ -569,6 +583,7 @@ function ArenaGame() {
       player,
       cars: player2 ? [player, player2, ...rivals] : [player, ...rivals],
       bullets: [],
+      mines: [],
       started: performance.now(),
       lastHud: 0,
       kills: 0,
@@ -658,6 +673,7 @@ function ArenaGame() {
         player,
         cars: list,
         bullets: [],
+        mines: [],
         started: performance.now(),
         lastHud: 0,
         kills: 0,
@@ -1167,7 +1183,13 @@ function ArenaGame() {
         o.charge = (o.charge ?? 0) + 1;
         if (o.charge >= ab.need) {
           o.charge = 0;
-          o.abT = ab.dur;
+          if (ab.kind === "mine") {
+            /* Magnetic Splash: a magnetic burst, then a landmine is left on the ground under the car */
+            g.mines.push({ x: o.x, y: o.y, owner: o, age: 0, used: false, seen: new Map() });
+            const own = g.mines.filter((m) => m.owner === o && !m.used);
+            for (let i = 0; i < own.length - MINE_MAX; i++) (own[i] as Mine).used = true; // oldest fizzles out
+            fx.impact(o.x, o.y, 0, ab.color, 30);
+          } else o.abT = ab.dur;
           if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
           if (!o.bot) {
@@ -1444,6 +1466,52 @@ function ArenaGame() {
           heading = steer(bot, desired);
           if (!pu && foeDist < 300) speedMul = 0.3; // close in: tap forward while lining up the shot
         }
+        /* landmines: bots know where enemy mines are and steer around them (not perfectly: a few miss one) */
+        const foeMines = g.mines.filter(
+          (m) => !m.used && m.owner !== bot && !(tdm && m.owner.team === bot.team),
+        );
+        if (foeMines.length) {
+          const MINE_LOOK = 130,
+            MINE_SAFE = MINE_RADIUS + 26;
+          const nearMine = (a: number) => {
+            const dx = Math.sin(a) * MINE_LOOK,
+              dy = -Math.cos(a) * MINE_LOOK;
+            for (const m of foeMines) {
+              if (m.seen.get(bot) === undefined) {
+                if (Math.hypot(m.x - bot.x, m.y - bot.y) > 340) continue;
+                m.seen.set(bot, Math.random() >= MINE_BLUNDER); // false = this bot never notices it
+              }
+              if (!m.seen.get(bot)) continue;
+              const t = clamp(
+                ((m.x - bot.x) * dx + (m.y - bot.y) * dy) / (dx * dx + dy * dy),
+                0,
+                1,
+              );
+              if (Math.hypot(bot.x + dx * t - m.x, bot.y + dy * t - m.y) < MINE_SAFE) return m;
+            }
+            return null;
+          };
+          const hot = nearMine(heading);
+          if (hot) {
+            // swing to whichever side of the mine we are already on, widening until the path is clear
+            const side =
+              Math.sign(
+                Math.sin(heading) * (hot.y - bot.y) * -1 + Math.cos(heading) * (hot.x - bot.x) * -1,
+              ) || 1;
+            for (const off of [0.5, 0.95, 1.4, 1.9, 2.5]) {
+              const a1 = heading + off * side,
+                a2 = heading - off * side;
+              if (!nearMine(a1) && clearDir(bot, a1, 90)) {
+                heading = a1;
+                break;
+              }
+              if (!nearMine(a2) && clearDir(bot, a2, 90)) {
+                heading = a2;
+                break;
+              }
+            }
+          }
+        }
         const turn = wrapAng(heading - bot.angle);
         bot.angle += turn * Math.min(1, dt * 5);
         const bSpeed =
@@ -1586,14 +1654,7 @@ function ArenaGame() {
           if (tdm && (v.team === b.owner.team || (v.inv ?? 0) > 0)) continue; // no friendly fire, spawn shield
           const target = carAt(v.carId);
           if (b.owner === p) mHit();
-          chargeUp(b.owner); // a clean hit, whether or not a shield soaks it
-          if (powerOn(v, "shield") && Math.random() >= SHIELD_LEAK) {
-            b.life = 0;
-            v.blk = 0.25;
-            if (v === p) mBlock();
-            fx.impact(b.x, b.y, dir, abilityOf(v.carId)?.color ?? PAL.cyan, 8);
-            continue;
-          }
+          chargeUp(b.owner); // every clean hit charges the shooter's v2 power
           if (v === p) mDamage();
           v.hp -= b.damage * (1 - target.armor / 250);
           b.life = 0;
@@ -1624,6 +1685,35 @@ function ArenaGame() {
           }
         }
       }
+      /* Magnetic Splash landmines: the first enemy to roll over one is blown up (same blast as the race mines).
+         The owner (and, in TDM, the owner's team) is immune. Each mine kills exactly one car, then it is spent. */
+      for (const m of g.mines) {
+        if (m.used) continue;
+        m.age += dt;
+        if (g.over || m.age < MINE_ARM) continue;
+        for (const v of g.cars) {
+          if (!v.alive || v === m.owner || Math.hypot(v.x - m.x, v.y - m.y) > MINE_RADIUS) continue;
+          if (tdm && (v.team === m.owner.team || (v.inv ?? 0) > 0)) continue;
+          m.used = true;
+          v.hp = 0;
+          v.alive = false;
+          const target = carAt(v.carId);
+          fx.explode(m.x, m.y, target.color);
+          fx.explode(m.x, m.y - 20, "#ff7a1a");
+          sfx.boom();
+          if (m.owner === p) {
+            g.kills++;
+            mKill({ victimV2: isV2(v.carId), frozen: !!v.frz, byFreeze: false, ghost: false });
+            mMine();
+          } else if (g.player2 && m.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+          if (tdm) {
+            v.respawn = TDM_RESPAWN;
+            if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
+          }
+          break;
+        }
+      }
+      g.mines = g.mines.filter((m) => !m.used);
       g.bullets = g.bullets.filter(
         (b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height,
       );
@@ -1845,6 +1935,43 @@ function ArenaGame() {
       blocks.forEach(([x, y, w, h], i) => drawBox(ctx, x, y, w, h, i));
       // tyre dust, sparks, smoke sit under the cars
       if (g) {
+        /* Magnetic Splash landmines */
+        for (const m of g.mines) {
+          const armed = m.age >= MINE_ARM;
+          const mineCol = "#ffb02e";
+          const blink = armed ? 0.5 + 0.5 * Math.sin(t * 6 + m.x) : Math.floor(t * 14) % 2;
+          // magnetic splash ring when it is first laid
+          if (m.age < 0.7) {
+            ctx.strokeStyle = hexA(mineCol, 1 - m.age / 0.7);
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(m.x, m.y, 14 + m.age * 150, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.globalCompositeOperation = "lighter";
+          const gl = ctx.createRadialGradient(m.x, m.y, 2, m.x, m.y, 44);
+          gl.addColorStop(0, hexA(mineCol, 0.3 + 0.2 * blink));
+          gl.addColorStop(1, hexA(mineCol, 0));
+          ctx.fillStyle = gl;
+          ctx.fillRect(m.x - 46, m.y - 46, 92, 92);
+          ctx.globalCompositeOperation = "source-over";
+          ctx.fillStyle = "#1b1030";
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, 15, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = mineCol;
+          ctx.lineWidth = 3;
+          ctx.stroke();
+          ctx.fillStyle = hexA("#ff3b3b", 0.35 + 0.65 * blink);
+          ctx.beginPath();
+          ctx.arc(m.x, m.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          for (let i = 0; i < 6; i++) {
+            const a = (i * Math.PI) / 3;
+            ctx.fillStyle = mineCol;
+            ctx.fillRect(m.x + Math.cos(a) * 15 - 2, m.y + Math.sin(a) * 15 - 2, 4, 4);
+          }
+        }
         for (const q of g.powerups) {
           const col = POWER_COLOR[q.kind];
           const bob = 1 + 0.1 * Math.sin(t * 5 + q.x);
@@ -2008,18 +2135,6 @@ function ArenaGame() {
             ctx.arc(0, 0, r + 9, 0, Math.PI * 2);
             ctx.stroke();
           }
-          if (powerOn(v, "shield")) {
-            // Aegis shield: a bubble everyone can see; it flares when it soaks a hit
-            const col = abilityOf(v.carId)?.color ?? "#ff5a5a";
-            const flare = (v.blk ?? 0) > 0;
-            ctx.fillStyle = hexA(col, flare ? 0.45 : 0.16 + 0.05 * Math.sin(t * 5));
-            ctx.beginPath();
-            ctx.arc(0, 0, r + 18, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = hexA(col, flare ? 1 : 0.8);
-            ctx.lineWidth = flare ? 5 : 3;
-            ctx.stroke();
-          }
           if (powerOn(v, "freeze")) {
             // Time Freeze field around the driver
             const col = abilityOf(v.carId)?.color ?? "#7df3ff";
@@ -2156,8 +2271,12 @@ function ArenaGame() {
         ctx.fillText(ab.label, bx, by - 6);
         ctx.textAlign = "right";
         ctx.fillStyle = on ? ab.color : "#ffe23d";
+        const liveMines =
+          ab.kind === "mine" ? (g?.mines ?? []).filter((m) => m.owner === p).length : 0;
         ctx.fillText(
-          on ? `${Math.ceil(p.abT as number)}s` : `${p.charge ?? 0}/${ab.need}`,
+          on
+            ? `${Math.ceil(p.abT as number)}s`
+            : `${p.charge ?? 0}/${ab.need}${liveMines ? ` · ${liveMines} MINE${liveMines > 1 ? "S" : ""}` : ""}`,
           bx + bw,
           by - 6,
         );

@@ -109,9 +109,9 @@ export const DEFS: Def[] = [
   },
   {
     id: "brick",
-    name: "Brick Wall",
-    desc: "Let the Redline v2 shield block 15 hits in one match",
-    target: 15,
+    name: "Minefield",
+    desc: "Blow up 3 opponents with Redline v2 landmines in one match",
+    target: 3,
     xp: 1500,
     ok: (o) => o.includes(v2Of(6)),
   },
@@ -181,8 +181,8 @@ export const DEFS: Def[] = [
   },
   {
     id: "fortress",
-    name: "Fortress",
-    desc: "Use the Aegis shield 3 times",
+    name: "Mine Layer",
+    desc: "Drop 3 Magnetic Splash landmines",
     target: 3,
     xp: 1000,
     ok: (o) => o.includes(v2Of(6)),
@@ -327,7 +327,8 @@ export function mPickup() {
   add("hoarder");
   set("pickups", ++ms.pickups);
 }
-export function mBlock() {
+/** a Redline v2 landmine just killed someone */
+export function mMine() {
   set("brick", ++ms.blocks);
 }
 export const mDamage = () => {
@@ -337,7 +338,7 @@ export const mPower = (kind: string) => {
   const use = {
     freeze: "time_lord",
     ghost: "ghost_walker",
-    shield: "fortress",
+    mine: "fortress",
     turret: "turret_master",
   }[kind];
   if (use) add(use);

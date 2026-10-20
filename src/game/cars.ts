@@ -65,14 +65,14 @@ export type Car = {
   ability?: AbilityKind;
 };
 
-export type AbilityKind = "freeze" | "ghost" | "shield" | "turret";
+export type AbilityKind = "freeze" | "ghost" | "mine" | "turret";
 
 export type AbilityInfo = {
   kind: AbilityKind;
   label: string;
   /** correct hits needed to charge it */
   need: number;
-  /** seconds the power lasts */
+  /** seconds the power lasts (0 = instant: the power fires once and the meter restarts) */
   dur: number;
   color: string;
   blurb: string;
@@ -95,13 +95,13 @@ export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
     color: "#d08cff",
     blurb: "20 hits: invisible to others for 30s, still hittable",
   },
-  shield: {
-    kind: "shield",
-    label: "AEGIS SHIELD",
-    need: 20,
-    dur: 30,
-    color: "#ff5a5a",
-    blurb: "20 hits: shield for 30s, blocks 75% of hits",
+  mine: {
+    kind: "mine",
+    label: "MAGNETIC SPLASH",
+    need: 10,
+    dur: 0,
+    color: "#ffb02e",
+    blurb: "10 hits: drops a landmine. First enemy to touch it blows up. You are immune",
   },
   turret: {
     kind: "turret",
@@ -132,8 +132,12 @@ export const TURRET_RANGE = 900;
 
 /** radius (px) of the Time Freeze field around the car */
 export const FREEZE_RADIUS = 380;
-/** chance a shielded car still takes a hit */
-export const SHIELD_LEAK = 0.25;
+/** Magnetic Splash landmine: trigger radius (px), arming delay (s), max live mines per driver */
+export const MINE_RADIUS = 30;
+export const MINE_ARM = 0.6;
+export const MINE_MAX = 5;
+/** chance a bot fails to notice a given enemy landmine and drives right over it */
+export const MINE_BLUNDER = 0.07;
 /** chance a bot rolls the v2 form of a car that has one */
 export const BOT_V2_CHANCE = 0.05;
 
@@ -250,9 +254,9 @@ export const cars: Car[] = [
 export const v2Cars: Car[] = [
   {
     name: "Redline v2",
-    model: "AEGIS PROTOCOL",
+    model: "MAGNETIC SPLASH",
     url: redlineV2,
-    hp: 200,
+    hp: 180,
     speed: 76,
     fireRate: 68,
     damage: 92,
@@ -262,7 +266,7 @@ export const v2Cars: Car[] = [
     h: 80,
     base: 6,
     price: 40000,
-    ability: "shield",
+    ability: "mine",
   },
   {
     name: "Phantom v2",
