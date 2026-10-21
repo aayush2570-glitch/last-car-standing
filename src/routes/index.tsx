@@ -25,7 +25,9 @@ import {
   getSprites,
   spriteReady,
   type Car,
-  FREEZE_RADIUS,
+  CLONE_COUNT,
+  CLONE_DAMAGE,
+  CLONE_SPAWN_R,
   MINE_RADIUS,
   MINE_ARM,
   MINE_MAX,
@@ -124,14 +126,18 @@ type Vehicle = {
   /* 2-player split screen: 0 = player 1, 1 = player 2 (undefined for bots) */
   pi?: number;
   deadPos?: number;
-  /* v2 abilities: hits landed toward the next charge, seconds the power has left, frozen this frame, shield-block flash */
+  /* v2 abilities: hits landed toward the next charge, seconds the power has left, shield-block flash */
   charge?: number;
   abT?: number;
-  frz?: boolean;
   blk?: number;
   /* Military Jeep v2 turret: world angle it points at, shot cooldown */
   tur?: number;
   tcd?: number;
+  /* Blue Turret v2 Virtual Clone: set on a clone = the real car it fights for (its kills count for that car) */
+  cloneOf?: Vehicle;
+  /* last enemy that shot this car (or one of its clones) and how long that memory lasts: clones hunt it first */
+  atk?: Vehicle;
+  atkT?: number;
 };
 /** Redline v2 Magnetic Splash landmine: lies on the ground until an enemy touches it (one kill, then it is spent) */
 type Mine = {
@@ -153,7 +159,6 @@ type Projectile = {
   owner: Vehicle;
   life: number;
   damage: number;
-  frz?: boolean;
 };
 type Dot = { x: number; y: number; me: boolean; team?: number | undefined };
 type Tdm = {
@@ -315,8 +320,10 @@ const NUMPAD: Record<string, string> = {
 };
 const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
 /** is this car's v2 power (of the given kind) running right now? */
-const powerOn = (v: Vehicle, kind: "freeze" | "ghost" | "mine" | "turret") =>
+const powerOn = (v: Vehicle, kind: "clone" | "ghost" | "mine" | "turret") =>
   (v.abT ?? 0) > 0 && abilityOf(v.carId)?.kind === kind;
+/** the real car behind a vehicle: a Virtual Clone belongs to the car that made it, everything else is its own owner */
+const ownerOf = (v: Vehicle): Vehicle => v.cloneOf ?? v;
 const fmtXp = (n: number) => n.toLocaleString("en-US");
 const P1_COLOR = "56,160,255";
 const P2_COLOR = "61,255,122";
@@ -1162,20 +1169,45 @@ function ArenaGame() {
       const p = g.player;
       const humans = g.player2 ? [p, g.player2] : [p];
       const tdm = g.tdm;
-      /* Time Freeze fields: cars and bullets inside an enemy's field stand still (the owner's own bullets don't) */
-      const zones = g.cars.filter((z) => z.alive && powerOn(z, "freeze"));
-      const frozenAt = (x: number, y: number, who: Vehicle) =>
-        zones.some(
-          (z) =>
-            z !== who &&
-            (!tdm || z.team !== who.team) &&
-            Math.hypot(x - z.x, y - z.y) < FREEZE_RADIUS,
-        );
-      for (const v of g.cars) v.frz = v.alive && zones.length > 0 && frozenAt(v.x, v.y, v);
       if (!g.over) {
         if (!tdm && p.alive) mAlive(dt);
         if (tdm) mBehind((tdm.score[1 - tdm.team] as number) - (tdm.score[tdm.team] as number));
       }
+      /* Virtual Clone: CLONE_COUNT exact copies appear around the car. They are one-hit bots that fight for it */
+      const spawnClones = (o: Vehicle) => {
+        const stats = carAt(o.carId);
+        for (let i = 0; i < CLONE_COUNT; i++) {
+          const a = o.angle + Math.PI / 4 + (i * Math.PI * 2) / CLONE_COUNT;
+          const c: Vehicle = {
+            x: o.x + Math.sin(a) * CLONE_SPAWN_R,
+            y: o.y - Math.cos(a) * CLONE_SPAWN_R,
+            angle: o.angle,
+            hp: stats.hp,
+            alive: true,
+            cooldown: 0.25 + i * 0.12,
+            bot: true,
+            drift: 0,
+            strafe: 0,
+            carId: o.carId,
+            hit: 0,
+            speedT: 0,
+            dblT: 0,
+            dodgeT: 0,
+            dodgeDir: 0,
+            dodgeAng: 0,
+            react: 0,
+            strafeAng: 0,
+            trail: 0,
+            cloneOf: o,
+            ...(o.team !== undefined ? { team: o.team } : null),
+          };
+          collide(c);
+          c.px = c.x;
+          c.py = c.y;
+          g.cars.push(c);
+          fx.impact(c.x, c.y, 0, "#4dd8ff", 14);
+        }
+      };
       /* every bullet that lands on an enemy charges the shooter's v2 power; a full charge fires it at once */
       const chargeUp = (o: Vehicle) => {
         const ab = abilityOf(o.carId);
@@ -1189,7 +1221,10 @@ function ArenaGame() {
             const own = g.mines.filter((m) => m.owner === o && !m.used);
             for (let i = 0; i < own.length - MINE_MAX; i++) (own[i] as Mine).used = true; // oldest fizzles out
             fx.impact(o.x, o.y, 0, ab.color, 30);
-          } else o.abT = ab.dur;
+          } else {
+            o.abT = ab.dur;
+            if (ab.kind === "clone") spawnClones(o);
+          }
           if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
           if (!o.bot) {
@@ -1203,7 +1238,7 @@ function ArenaGame() {
         tdm.time += dt;
         for (const v of g.cars) {
           if (v.inv) v.inv = Math.max(0, v.inv - dt);
-          if (v.alive) continue;
+          if (v.alive || v.cloneOf) continue;
           v.respawn = (v.respawn ?? 0) - dt;
           if (v.respawn > 0) continue;
           const sp = TDM_SPAWN[v.team === 1 ? 1 : 0] as { x: number; y: number };
@@ -1273,7 +1308,7 @@ function ArenaGame() {
       }
       /* human drivers: player 1 on the arrow keys, player 2 on 8 / 2 / 4 / 6 and 0 to fire */
       const drive = (h: Vehicle, ctl: Ctl) => {
-        if (!h.alive || g.over || h.frz) return;
+        if (!h.alive || g.over) return;
         const stats = carAt(h.carId);
         let forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
         let side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
@@ -1356,7 +1391,6 @@ function ArenaGame() {
       for (const bot of g.cars) {
         if (!bot.bot || !bot.alive) continue;
         bot.cooldown -= dt;
-        if (bot.frz) continue; // time is stopped around this bot
         const me = carAt(bot.carId);
         const hpFrac = bot.hp / me.hp;
         /* TDM rubber-band: the team that is behind plays a bit sharper, the leaders a bit sloppier,
@@ -1369,7 +1403,7 @@ function ArenaGame() {
         const targets = g.cars.filter(
           (x) =>
             x.alive &&
-            x !== bot &&
+            ownerOf(x) !== ownerOf(bot) && // never the owner, nor a clone of the same car
             !(g.over && !x.bot && !x.alive) &&
             !powerOn(x, "ghost") && // a cloaked car can't be seen, so bots never aim at it
             (!tdm || x.team !== bot.team),
@@ -1383,6 +1417,9 @@ function ArenaGame() {
           let score = d * (0.6 + 0.4 * (c.hp / carAt(c.carId).hp));
           if (lineBlocked(bot.x, bot.y, c.x, c.y, 8)) score += 220;
           if (c === bot.foe) score -= 120;
+          // clones go after whoever has been shooting their master
+          const master = ownerOf(bot);
+          if (bot.cloneOf && (master.atkT ?? 0) > 0 && ownerOf(c) === master.atk) score -= 320;
           if (score < best) {
             best = score;
             foe = c;
@@ -1393,7 +1430,7 @@ function ArenaGame() {
         // power-ups: hurt bots hunt health, healthy bots grab boosts when the coast is clear
         let pu: Powerup | null = null;
         let puD = Infinity;
-        for (const q of g.powerups) {
+        for (const q of bot.cloneOf ? [] : g.powerups) {
           const d = Math.hypot(q.x - bot.x, q.y - bot.y);
           let reach = 0;
           if (q.kind === "health") reach = hpFrac < 0.45 ? 1200 : hpFrac < 0.8 ? 450 : 0;
@@ -1417,7 +1454,12 @@ function ArenaGame() {
         if (bot.dodgeT <= 0 && bot.react <= 0) {
           let urgent = 99;
           for (const b of g.bullets) {
-            if (b.owner === bot || b.life <= 0 || (tdm && b.owner.team === bot.team)) continue;
+            if (
+              ownerOf(b.owner) === ownerOf(bot) ||
+              b.life <= 0 ||
+              (tdm && b.owner.team === bot.team)
+            )
+              continue;
             const rx = bot.x - b.x,
               ry = bot.y - b.y;
             const sp2 = b.vx * b.vx + b.vy * b.vy;
@@ -1468,7 +1510,7 @@ function ArenaGame() {
         }
         /* landmines: bots know where enemy mines are and steer around them (not perfectly: a few miss one) */
         const foeMines = g.mines.filter(
-          (m) => !m.used && m.owner !== bot && !(tdm && m.owner.team === bot.team),
+          (m) => !m.used && m.owner !== ownerOf(bot) && !(tdm && m.owner.team === bot.team),
         );
         if (foeMines.length) {
           const MINE_LOOK = 130,
@@ -1555,11 +1597,13 @@ function ArenaGame() {
               vy: -Math.cos(aim) * 400,
               owner: bot,
               life: 2.5,
-              damage: 5.6 * (1 + 0.15 * aid),
+              damage: bot.cloneOf ? CLONE_DAMAGE : 5.6 * (1 + 0.15 * aid),
             });
           }
           bot.cooldown =
-            (Math.max(0.36, shotInterval(me) * 1.4) + Math.random() * 0.3) * (1 - 0.22 * aid);
+            (Math.max(0.36, shotInterval(me) * 1.4) + Math.random() * 0.3) *
+            (1 - 0.22 * aid) *
+            (bot.cloneOf ? 0.75 : 1); // clones keep the pressure on
           fx.muzzle(mx, my, aim, tdm ? bulletCol(true, bot) : PAL.hostile);
         }
       }
@@ -1583,14 +1627,10 @@ function ArenaGame() {
               d = 1;
             }
             const push = (min - d) / 2;
-            const wa = a.frz ? 0 : 1,
-              wb = b.frz ? 0 : 1;
-            if (wa + wb === 0) continue; // two frozen cars: time is stopped, nobody moves
-            const sh = (push * 2) / (wa + wb);
-            a.x -= (dx / d) * sh * wa;
-            a.y -= (dy / d) * sh * wa;
-            b.x += (dx / d) * sh * wb;
-            b.y += (dy / d) * sh * wb;
+            a.x -= (dx / d) * push;
+            a.y -= (dy / d) * push;
+            b.x += (dx / d) * push;
+            b.y += (dy / d) * push;
             if (pass === 0 && push > 3) {
               fx.impact((a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(dx, -dy), PAL.yellow, 3);
               if (!a.bot || !b.bot) fx.shake = Math.max(fx.shake, 2);
@@ -1625,7 +1665,8 @@ function ArenaGame() {
       for (const q of g.powerups) q.life -= dt;
       for (const q of g.powerups) {
         for (const v of g.cars) {
-          if (!v.alive || q.life <= 0 || Math.hypot(q.x - v.x, q.y - v.y) > 42) continue;
+          if (!v.alive || v.cloneOf || q.life <= 0 || Math.hypot(q.x - v.x, q.y - v.y) > 42)
+            continue;
           q.life = 0;
           if (q.kind === "health")
             v.hp = Math.min(carAt(v.carId).hp, v.hp + carAt(v.carId).hp * 0.35);
@@ -1638,8 +1679,6 @@ function ArenaGame() {
       }
       g.powerups = g.powerups.filter((q) => q.life > 0);
       for (const b of g.bullets) {
-        b.frz = zones.length > 0 && frozenAt(b.x, b.y, b.owner);
-        if (b.frz) continue; // hangs in the air until the field ends or its owner leaves it
         b.x += b.vx * dt;
         b.y += b.vy * dt;
         b.life -= dt;
@@ -1649,14 +1688,25 @@ function ArenaGame() {
           fx.impact(b.x, b.y, dir, PAL.yellow, 6);
         }
         for (const v of g.cars) {
-          if (!v.alive || v === b.owner || b.life <= 0 || Math.hypot(b.x - v.x, b.y - v.y) >= 32)
+          if (
+            !v.alive ||
+            ownerOf(v) === ownerOf(b.owner) ||
+            b.life <= 0 ||
+            Math.hypot(b.x - v.x, b.y - v.y) >= 32
+          )
             continue;
           if (tdm && (v.team === b.owner.team || (v.inv ?? 0) > 0)) continue; // no friendly fire, spawn shield
           const target = carAt(v.carId);
-          if (b.owner === p) mHit();
-          chargeUp(b.owner); // every clean hit charges the shooter's v2 power
+          const shooter = ownerOf(b.owner); // a clone's shots count for the car that made it
+          if (shooter === p) mHit();
+          chargeUp(shooter); // every clean hit charges the shooter's v2 power
           if (v === p) mDamage();
-          v.hp -= b.damage * (1 - target.armor / 250);
+          // the hit car (or the master of a hit clone) remembers who is shooting at it: its clones hunt that car
+          ownerOf(v).atk = shooter;
+          ownerOf(v).atkT = 5;
+          if (v.cloneOf)
+            v.hp = 0; // a Virtual Clone dies to a single bullet
+          else v.hp -= b.damage * (1 - target.armor / 250);
           b.life = 0;
           v.hit = 0.14;
           fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
@@ -1667,20 +1717,22 @@ function ArenaGame() {
           if (v.hp <= 0) {
             v.hp = 0;
             v.alive = false;
-            fx.explode(v.x, v.y, target.color);
+            fx.explode(v.x, v.y, v.cloneOf ? "#4dd8ff" : target.color);
             sfx.boom();
-            if (b.owner === p) {
-              g.kills++;
-              mKill({
-                victimV2: isV2(v.carId),
-                frozen: !!v.frz,
-                byFreeze: abilityOf(p.carId)?.kind === "freeze",
-                ghost: powerOn(p, "ghost"),
-              });
-            } else if (g.player2 && b.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
-            if (tdm) {
-              v.respawn = TDM_RESPAWN;
-              if (!g.over) tdm.score[b.owner.team === 1 ? 1 : 0]++;
+            if (!v.cloneOf) {
+              // destroying a clone is only a blast: no kill, no score, no respawn
+              if (shooter === p) {
+                g.kills++;
+                mKill({
+                  victimV2: isV2(v.carId),
+                  byClone: !!b.owner.cloneOf,
+                  ghost: powerOn(p, "ghost"),
+                });
+              } else if (g.player2 && shooter === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+              if (tdm) {
+                v.respawn = TDM_RESPAWN;
+                if (!g.over) tdm.score[shooter.team === 1 ? 1 : 0]++;
+              }
             }
           }
         }
@@ -1692,7 +1744,8 @@ function ArenaGame() {
         m.age += dt;
         if (g.over || m.age < MINE_ARM) continue;
         for (const v of g.cars) {
-          if (!v.alive || v === m.owner || Math.hypot(v.x - m.x, v.y - m.y) > MINE_RADIUS) continue;
+          if (!v.alive || ownerOf(v) === m.owner || Math.hypot(v.x - m.x, v.y - m.y) > MINE_RADIUS)
+            continue;
           if (tdm && (v.team === m.owner.team || (v.inv ?? 0) > 0)) continue;
           m.used = true;
           v.hp = 0;
@@ -1701,14 +1754,16 @@ function ArenaGame() {
           fx.explode(m.x, m.y, target.color);
           fx.explode(m.x, m.y - 20, "#ff7a1a");
           sfx.boom();
-          if (m.owner === p) {
-            g.kills++;
-            mKill({ victimV2: isV2(v.carId), frozen: !!v.frz, byFreeze: false, ghost: false });
-            mMine();
-          } else if (g.player2 && m.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
-          if (tdm) {
-            v.respawn = TDM_RESPAWN;
-            if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
+          if (!v.cloneOf) {
+            if (m.owner === p) {
+              g.kills++;
+              mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
+              mMine();
+            } else if (g.player2 && m.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+            if (tdm) {
+              v.respawn = TDM_RESPAWN;
+              if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
+            }
           }
           break;
         }
@@ -1731,7 +1786,7 @@ function ArenaGame() {
         let want = v.angle;
         let canFire = false;
         let tgt: Vehicle | null = null;
-        if (powerOn(v, "turret") && !v.frz) {
+        if (powerOn(v, "turret")) {
           // nearest enemy: closest one with a clear line of fire wins, otherwise just track the closest
           let bestVis = Infinity,
             bestAny = Infinity,
@@ -1765,7 +1820,7 @@ function ArenaGame() {
         const diff = ((want - v.tur + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
         const step2 = TURRET_TURN * dt;
         v.tur += Math.abs(diff) <= step2 ? diff : Math.sign(diff) * step2;
-        if (canFire && !v.frz && Math.abs(diff) < 0.12 && v.tcd <= 0) {
+        if (canFire && Math.abs(diff) < 0.12 && v.tcd <= 0) {
           const bx = mx + Math.sin(v.tur) * TURRET_MUZZLE,
             by = my - Math.cos(v.tur) * TURRET_MUZZLE;
           g.bullets.push({
@@ -1787,21 +1842,35 @@ function ArenaGame() {
         v.hit = Math.max(0, v.hit - dt);
         v.blk = Math.max(0, (v.blk ?? 0) - dt);
         if (v.abT) v.abT = Math.max(0, v.abT - dt);
+        if (v.atkT) v.atkT = Math.max(0, v.atkT - dt);
         v.speedT = Math.max(0, v.speedT - dt);
         v.dblT = Math.max(0, v.dblT - dt);
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
       }
-      const alive = g.cars.filter((x) => x.alive).length;
+      /* Virtual Clones vanish in a blast when the power runs out; destroyed ones leave the match */
+      for (const c of g.cars) {
+        if (c.cloneOf && c.alive && (c.cloneOf.abT ?? 0) <= 0) {
+          c.alive = false;
+          fx.explode(c.x, c.y, "#4dd8ff");
+        }
+      }
+      g.cars = g.cars.filter((c) => !(c.cloneOf && !c.alive));
+      /* clones are not cars in the standings: they never count towards "cars left" */
+      const alive = g.cars.filter((x) => x.alive && !x.cloneOf).length;
+      /* a car whose clones are still fighting is not out yet: the camera follows a clone until the last one falls */
+      const cloneLive = (h: Vehicle) => g.cars.some((c) => c.cloneOf === h && c.alive);
       const p2 = g.player2;
       if (!g.over) {
         if (!tdm) {
           if (!p2) {
-            if (!p.alive) g.over = { won: false, position: alive + 1, t: 1.6 };
-            else if (alive === 1) g.over = { won: true, position: 1, t: 1.1 };
+            if (!p.alive && (!cloneLive(p) || alive === 0))
+              g.over = { won: false, position: Math.max(2, alive + 1), t: 1.6 };
+            else if (p.alive && alive === 1) g.over = { won: true, position: 1, t: 1.1 };
           } else {
             // 2 players: a wrecked player spectates; the match ends when one car is left or both are out
-            for (const h of humans) if (!h.alive && h.deadPos === undefined) h.deadPos = alive + 1;
-            if (!p.alive && !p2.alive)
+            for (const h of humans)
+              if (!h.alive && !cloneLive(h) && h.deadPos === undefined) h.deadPos = alive + 1;
+            if (!p.alive && !p2.alive && !cloneLive(p) && !cloneLive(p2))
               g.over = { won: false, position: Math.min(p.deadPos ?? 2, p2.deadPos ?? 2), t: 1.6 };
             else if (alive === 1) g.over = { won: p.alive, position: 1, t: 1.1 };
           }
@@ -1815,7 +1884,7 @@ function ArenaGame() {
       }
       if (now - g.lastHud > 140) {
         const dots: Dot[] = g.cars
-          .filter((v) => v.alive && (v === p || !powerOn(v, "ghost")))
+          .filter((v) => v.alive && !v.cloneOf && (v === p || !powerOn(v, "ghost")))
           .map((v) => ({
             x: (v.x / WORLD.width) * 100,
             y: (v.y / WORLD.height) * 100,
@@ -1872,7 +1941,12 @@ function ArenaGame() {
     const drawView = (width: number, height: number, t: number, dtc: number, pi: number) => {
       const g = gameRef.current,
         fx = fxRef.current;
-      const p = pi === 1 ? g?.player2 : g?.player;
+      const me0 = pi === 1 ? g?.player2 : g?.player;
+      /* Virtual Clone: when your car is wrecked but a clone is still fighting, the camera follows that clone
+         (instead of the wrecked car) until the last clone falls */
+      const clone =
+        me0 && g && !me0.alive ? g.cars.find((c) => c.cloneOf === me0 && c.alive) : undefined;
+      const p = clone ?? me0;
       const zoom = Math.min(width / 820, height / 560, 1);
       let cx = p ? p.x : WORLD.width / 2,
         cy = p ? p.y : WORLD.height / 2;
@@ -2023,7 +2097,7 @@ function ArenaGame() {
         for (const v of g.cars) {
           if (!v.alive) continue;
           const cloaked = powerOn(v, "ghost");
-          if (cloaked && v !== p) continue; // invisible to everyone but its driver
+          if (cloaked && v !== me0) continue; // invisible to everyone but its driver
           const car = carAt(v.carId);
           const img = sprites[v.carId];
           if (cloaked) ctx.globalAlpha = 0.38 + 0.08 * Math.sin(t * 6); // driver sees a faint ghost
@@ -2087,11 +2161,12 @@ function ArenaGame() {
           }
           // One simple circle under every car: blue = you, red = everyone else.
           const r = Math.max(car.w, car.h) * 0.62;
+          const own = ownerOf(v); // a clone is painted exactly like the car it copies
           const rgb = g.tdm
             ? (TEAM_RGB[v.team === 1 ? 1 : 0] as string)
-            : g.player2 && v === g.player2
+            : g.player2 && own === g.player2
               ? P2_COLOR
-              : !v.bot
+              : !own.bot
                 ? P1_COLOR
                 : "255,64,64";
           ctx.fillStyle = `rgba(${rgb},${v.hit > 0 ? 0.55 : 0.28})`;
@@ -2147,33 +2222,19 @@ function ArenaGame() {
             ctx.arc(0, 0, r + 9, 0, Math.PI * 2);
             ctx.stroke();
           }
-          if (powerOn(v, "freeze")) {
-            // Time Freeze field around the driver
-            const col = abilityOf(v.carId)?.color ?? "#7df3ff";
-            ctx.fillStyle = hexA(col, 0.07 + 0.03 * Math.sin(t * 4));
+          if (v.cloneOf && v.cloneOf === me0) {
+            // only the clones' own driver sees this faint ring (to tell them apart from enemy lookalikes)
+            ctx.strokeStyle = hexA("#4dd8ff", 0.5 + 0.2 * Math.sin(t * 6));
+            ctx.lineWidth = 2;
+            ctx.setLineDash([6, 6]);
             ctx.beginPath();
-            ctx.arc(0, 0, FREEZE_RADIUS, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = hexA(col, 0.65);
-            ctx.lineWidth = 3;
-            ctx.setLineDash([22, 14]);
-            ctx.lineDashOffset = -t * 30;
+            ctx.arc(0, 0, r + 6, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
           }
-          if (v.frz) {
-            // iced over
-            ctx.fillStyle = "rgba(150,235,255,0.42)";
-            ctx.beginPath();
-            ctx.arc(0, 0, r, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = "rgba(225,250,255,0.9)";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-          }
           ctx.restore();
           ctx.globalAlpha = 1;
-          if (!v.bot || v.hp < car.hp * 0.85) {
+          if (!v.cloneOf && (!v.bot || v.hp < car.hp * 0.85)) {
             const pct = Math.max(0, v.hp / car.hp);
             ctx.fillStyle = "#000";
             ctx.fillRect(v.x - 26, v.y - 50, 52, 9);
@@ -2190,7 +2251,7 @@ function ArenaGame() {
             ctx.fillStyle = "rgba(255,255,255,0.35)";
             ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 2);
           }
-          if (!v.bot) {
+          if (!v.bot || v === clone) {
             // yellow "YOU" tag above the player's car (P1 / P2 in split screen)
             const tx = v.x,
               ty = v.y - 66;
@@ -2206,11 +2267,11 @@ function ArenaGame() {
             ctx.font = '9px "Press Start 2P", monospace';
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText(g.player2 ? (v === g.player2 ? "P2" : "P1") : "YOU", tx, ty + 1);
+            ctx.fillText(g.player2 ? (ownerOf(v) === g.player2 ? "P2" : "P1") : "YOU", tx, ty + 1);
           }
         }
         for (const b of g.bullets)
-          drawTracer(ctx, b.x, b.y, b.vx, b.vy, b.frz ? "#bff8ff" : bulletCol(!!g.tdm, b.owner));
+          drawTracer(ctx, b.x, b.y, b.vx, b.vy, bulletCol(!!g.tdm, ownerOf(b.owner)));
       }
       fx.draw(ctx);
       const pulse = 0.55 + 0.45 * Math.sin(t * 3);
@@ -2243,7 +2304,7 @@ function ArenaGame() {
       vg.addColorStop(1, "rgba(4,0,18,0.55)");
       ctx.fillStyle = vg;
       ctx.fillRect(0, 0, width, height);
-      if (p && p.alive && p.hp / carAt(p.carId).hp < 0.3) {
+      if (me0 && me0.alive && me0.hp / carAt(me0.carId).hp < 0.3) {
         const beat = 0.18 + 0.14 * Math.sin(t * 7);
         const rg = ctx.createRadialGradient(
           width / 2,
@@ -2258,11 +2319,11 @@ function ArenaGame() {
         ctx.fillStyle = rg;
         ctx.fillRect(0, 0, width, height);
       }
-      /* v2 power meter (bottom centre) and the frozen-screen tint */
-      const ab = p && p.alive ? abilityOf(p.carId) : null;
-      if (p && ab) {
-        const on = (p.abT ?? 0) > 0;
-        const frac = on ? (p.abT as number) / ab.dur : (p.charge ?? 0) / ab.need;
+      /* v2 power meter (bottom centre) and the clone-camera banner */
+      const ab = me0 && me0.alive ? abilityOf(me0.carId) : null;
+      if (me0 && ab) {
+        const on = (me0.abT ?? 0) > 0;
+        const frac = on ? (me0.abT as number) / ab.dur : (me0.charge ?? 0) / ab.need;
         const bw = Math.min(190, width * 0.5),
           bx = width / 2 - bw / 2,
           by = height - 44;
@@ -2284,23 +2345,27 @@ function ArenaGame() {
         ctx.textAlign = "right";
         ctx.fillStyle = on ? ab.color : "#ffe23d";
         const liveMines =
-          ab.kind === "mine" ? (g?.mines ?? []).filter((m) => m.owner === p).length : 0;
+          ab.kind === "mine" ? (g?.mines ?? []).filter((m) => m.owner === me0).length : 0;
+        const liveClones =
+          ab.kind === "clone"
+            ? (g?.cars ?? []).filter((c) => c.cloneOf === me0 && c.alive).length
+            : 0;
         ctx.fillText(
           on
-            ? `${Math.ceil(p.abT as number)}s`
-            : `${p.charge ?? 0}/${ab.need}${liveMines ? ` · ${liveMines} MINE${liveMines > 1 ? "S" : ""}` : ""}`,
+            ? `${liveClones ? `${liveClones} CLONES · ` : ""}${Math.ceil(me0.abT as number)}s`
+            : `${me0.charge ?? 0}/${ab.need}${liveMines ? ` · ${liveMines} MINE${liveMines > 1 ? "S" : ""}` : ""}`,
           bx + bw,
           by - 6,
         );
       }
-      if (p && p.alive && p.frz) {
-        ctx.fillStyle = "rgba(120,220,255,0.16)";
-        ctx.fillRect(0, 0, width, height);
-        ctx.font = '14px "Press Start 2P", monospace';
+      if (clone) {
+        ctx.font = '12px "Press Start 2P", monospace';
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = "#d6fbff";
-        ctx.fillText("FROZEN", width / 2, height * 0.2);
+        ctx.fillStyle = "rgba(8,3,26,0.78)";
+        ctx.fillRect(width / 2 - 170, height * 0.12 - 16, 340, 32);
+        ctx.fillStyle = "#4dd8ff";
+        ctx.fillText("CLONE CAM · YOUR CAR IS DOWN", width / 2, height * 0.12);
       }
     };
 

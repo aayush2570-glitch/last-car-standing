@@ -93,8 +93,8 @@ export const DEFS: Def[] = [
   { id: "veteran", name: "Veteran", desc: "Win 50 matches in total", target: 50, xp: 10000 },
   {
     id: "frostbite",
-    name: "Frostbite",
-    desc: "Land 3 kills on cars frozen by Blue Turret v2's Time Freeze",
+    name: "Clone Wars",
+    desc: "Land 3 kills with Blue Turret v2's Virtual Clones",
     target: 3,
     xp: 1500,
     ok: (o) => o.includes(v2Of(1)),
@@ -165,8 +165,8 @@ export const DEFS: Def[] = [
   },
   {
     id: "time_lord",
-    name: "Time Lord",
-    desc: "Use Time Freeze 3 times",
+    name: "Clone Master",
+    desc: "Use Virtual Clone 3 times",
     target: 3,
     xp: 1000,
     ok: (o) => o.includes(v2Of(1)),
@@ -302,12 +302,7 @@ export function mStart(mode: "ffa" | "tdm" | "race", car: number) {
   if (x && !(x.d ?? []).includes(car))
     set("garage_rat", (x.d ?? []).length + 1, [...(x.d ?? []), car]);
 }
-export function mKill(o: {
-  victimV2: boolean;
-  frozen: boolean;
-  byFreeze: boolean;
-  ghost: boolean;
-}) {
+export function mKill(o: { victimV2: boolean; byClone: boolean; ghost: boolean }) {
   ms.kills++;
   add("centurion");
   if (ms.ffa) {
@@ -317,7 +312,7 @@ export function mKill(o: {
   }
   if (ms.tdm) set("tdm_slayer", ms.kills);
   if (o.victimV2) add("kill_v2");
-  if (o.frozen && o.byFreeze) add("frostbite");
+  if (o.byClone) add("frostbite");
   if (o.ghost) set("ghost", ++ms.ghost);
 }
 export function mHit() {
@@ -336,7 +331,7 @@ export const mDamage = () => {
 };
 export const mPower = (kind: string) => {
   const use = {
-    freeze: "time_lord",
+    clone: "time_lord",
     ghost: "ghost_walker",
     mine: "fortress",
     turret: "turret_master",

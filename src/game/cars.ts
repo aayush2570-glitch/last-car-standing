@@ -65,7 +65,7 @@ export type Car = {
   ability?: AbilityKind;
 };
 
-export type AbilityKind = "freeze" | "ghost" | "mine" | "turret";
+export type AbilityKind = "clone" | "ghost" | "mine" | "turret";
 
 export type AbilityInfo = {
   kind: AbilityKind;
@@ -79,13 +79,14 @@ export type AbilityInfo = {
 };
 
 export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
-  freeze: {
-    kind: "freeze",
-    label: "TIME FREEZE",
-    need: 10,
-    dur: 5,
-    color: "#7df3ff",
-    blurb: "10 hits: freezes nearby cars and bullets for 5s",
+  clone: {
+    kind: "clone",
+    label: "VIRTUAL CLONE",
+    need: 20,
+    dur: 30,
+    color: "#4dd8ff",
+    blurb:
+      "20 hits: 4 one-hit clones appear, look identical and shoot for you (their kills are yours)",
   },
   ghost: {
     kind: "ghost",
@@ -130,8 +131,10 @@ export const TURRET_TURN = 5.5;
 /** how far (px) the turret will engage a target */
 export const TURRET_RANGE = 900;
 
-/** radius (px) of the Time Freeze field around the car */
-export const FREEZE_RADIUS = 380;
+/** Virtual Clone: how many clones appear, how far (px) from the car they spawn, and the damage of one clone bullet */
+export const CLONE_COUNT = 4;
+export const CLONE_SPAWN_R = 85;
+export const CLONE_DAMAGE = 9;
 /** Magnetic Splash landmine: trigger radius (px), arming delay (s), max live mines per driver */
 export const MINE_RADIUS = 30;
 export const MINE_ARM = 0.6;
@@ -286,19 +289,19 @@ export const v2Cars: Car[] = [
   },
   {
     name: "Blue Turret v2",
-    model: "CHRONO SUPPORT",
+    model: "VIRTUAL CLONE",
     url: blueTurretV2,
     hp: 160,
-    speed: 99,
+    speed: 88,
     fireRate: 60,
     damage: 120,
-    armor: 96,
+    armor: 99,
     color: "#4dd8ff",
     w: 45,
     h: 80,
     base: 1,
     price: 70000,
-    ability: "freeze",
+    ability: "clone",
   },
   {
     name: "Military Jeep v2",
