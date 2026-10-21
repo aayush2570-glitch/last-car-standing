@@ -30,6 +30,7 @@ import {
   CLONE_SPAWN_R,
   MINE_RADIUS,
   MINE_ARM,
+  MINE_DAMAGE,
   MINE_MAX,
   MINE_BLUNDER,
   TURRET_MOUNT,
@@ -1738,7 +1739,7 @@ function ArenaGame() {
         }
       }
       /* Magnetic Splash landmines: the first enemy to roll over one is blown up (same blast as the race mines).
-         The owner (and, in TDM, the owner's team) is immune. Each mine kills exactly one car, then it is spent. */
+         The owner (and, in TDM, the owner's team) is immune. Each mine hits exactly one car for MINE_DAMAGE HP, then it is spent. */
       for (const m of g.mines) {
         if (m.used) continue;
         m.age += dt;
@@ -1748,21 +1749,29 @@ function ArenaGame() {
             continue;
           if (tdm && (v.team === m.owner.team || (v.inv ?? 0) > 0)) continue;
           m.used = true;
-          v.hp = 0;
-          v.alive = false;
+          // the blast takes a fixed chunk of HP (armor doesn't help); a Virtual Clone still dies to it
+          v.hp = v.cloneOf ? 0 : Math.max(0, v.hp - MINE_DAMAGE);
+          v.hit = 0.14;
+          ownerOf(v).atk = m.owner;
+          ownerOf(v).atkT = 5;
           const target = carAt(v.carId);
           fx.explode(m.x, m.y, target.color);
           fx.explode(m.x, m.y - 20, "#ff7a1a");
           sfx.boom();
-          if (!v.cloneOf) {
-            if (m.owner === p) {
-              g.kills++;
-              mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
-              mMine();
-            } else if (g.player2 && m.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
-            if (tdm) {
-              v.respawn = TDM_RESPAWN;
-              if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
+          if (v === p) mDamage();
+          if (!v.bot) fx.shake = Math.max(fx.shake, 6);
+          if (v.hp <= 0) {
+            v.alive = false;
+            if (!v.cloneOf) {
+              if (m.owner === p) {
+                g.kills++;
+                mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
+                mMine();
+              } else if (g.player2 && m.owner === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+              if (tdm) {
+                v.respawn = TDM_RESPAWN;
+                if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
+              }
             }
           }
           break;

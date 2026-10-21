@@ -102,7 +102,7 @@ export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
     need: 10,
     dur: 0,
     color: "#ffb02e",
-    blurb: "10 hits: drops a landmine. First enemy to touch it blows up. You are immune",
+    blurb: "10 hits: drops a landmine. First enemy to touch it loses 50 HP. You are immune",
   },
   turret: {
     kind: "turret",
@@ -139,6 +139,8 @@ export const CLONE_DAMAGE = 9;
 export const MINE_RADIUS = 30;
 export const MINE_ARM = 0.6;
 export const MINE_MAX = 5;
+/** HP a landmine takes off the first enemy that touches it (a Virtual Clone still dies) */
+export const MINE_DAMAGE = 50;
 /** chance a bot fails to notice a given enemy landmine and drives right over it */
 export const MINE_BLUNDER = 0.07;
 /** chance a bot rolls the v2 form of a car that has one */
