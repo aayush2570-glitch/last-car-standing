@@ -76,6 +76,7 @@ import {
 } from "@/game/wrecks";
 import { drawNight, newStorm, stepStorm, type Storm } from "@/game/night";
 import garageThumb from "@/assets/wrecks/map_garage.webp";
+import yardThumb from "@/assets/wrecks/map_yard.webp";
 import { enterLandscape, useControlPrefs, useDevice } from "@/game/device";
 import { ControlSettings, RotateOverlay, TouchControls, type Joy } from "@/game/TouchControls";
 
@@ -538,6 +539,15 @@ function ArenaGame() {
   selectedRef.current = selected;
   const startRef = useRef<() => void>(() => {});
   const [mapSel, setMapSel] = useState<MapKind>("yard");
+  /* load both map pictures as soon as the game page opens, so the map cards never show up blank */
+  useEffect(() => {
+    const pre = [yardThumb, garageThumb].map((src) => {
+      const im = new Image();
+      im.src = src;
+      return im;
+    });
+    return () => void pre.length;
+  }, []);
   const mapSelRef = useRef<MapKind>("yard");
   mapSelRef.current = mapSel;
   applyTeamLook(mapSel);
@@ -3276,9 +3286,9 @@ function ArenaGame() {
                 <div className="map-pick" role="radiogroup" aria-label="Map">
                   {(
                     [
-                      ["yard", "NEON YARD", null],
+                      ["yard", "NEON YARD", yardThumb],
                       ["garage", "WRECK GARAGE", garageThumb],
-                    ] as [MapKind, string, string | null][]
+                    ] as [MapKind, string, string][]
                   ).map(([id, name, img]) => (
                     <button
                       key={id}
@@ -3288,10 +3298,7 @@ function ArenaGame() {
                       className={`map-card${mapSel === id ? " on" : ""}`}
                       onClick={() => setMapSel(id)}
                     >
-                      <span
-                        className={`map-thumb thumb-${id}`}
-                        style={img ? { backgroundImage: `url(${img})` } : undefined}
-                      />
+                      <img className="map-thumb" src={img} alt={name} width={518} height={292} />
                       <span className="map-name">{name}</span>
                     </button>
                   ))}
