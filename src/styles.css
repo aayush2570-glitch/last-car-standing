@@ -648,3 +648,12 @@ html, body { overscroll-behavior: none; }
   .garage.two { flex-direction: row; padding-top: 40px; }
   .garage.two > .half-0 { border-right: 3px solid #2ef2ff; border-bottom: 0; }
 }
+
+/* FFA map picker (mode select) */
+.map-pick { display: flex; gap: 10px; width: 100%; margin-bottom: 10px; }
+.map-card { flex: 1; background: #120a2a; border: 3px solid #3a2a6a; padding: 6px; cursor: pointer; color: #fff; font-family: inherit; }
+.map-card.on { border-color: #ffe23d; box-shadow: 0 0 0 2px #000, 0 0 14px rgba(255, 226, 61, 0.5); }
+.map-thumb { display: block; width: 100%; aspect-ratio: 16 / 9; background-size: cover; background-position: center; image-rendering: auto; }
+.map-thumb.thumb-yard { background: linear-gradient(135deg, #3a3e48, #4a5060 60%, #2a2d36); position: relative; }
+.map-thumb.thumb-yard::after { content: ""; position: absolute; inset: 22% 18% 30% 30%; background: #c4572b; box-shadow: 46px 20px 0 -6px #2b6cc4; }
+.map-name { display: block; margin-top: 6px; font-size: 9px; letter-spacing: 1px; }

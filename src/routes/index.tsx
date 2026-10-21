@@ -63,6 +63,19 @@ import {
 } from "@/game/missions";
 import { Fx, Sfx, drawTracer } from "@/game/fx";
 import { RaceMode } from "@/game/RaceMode";
+import {
+  WRECK_BLAST_DMG,
+  WRECK_BLAST_R,
+  WRECK_HITS,
+  drawWreck,
+  garageLayout,
+  stepWrecks,
+  wreckContains,
+  wreckHeat,
+  type Wreck,
+} from "@/game/wrecks";
+import { drawNight, newStorm, stepStorm, type Storm } from "@/game/night";
+import garageThumb from "@/assets/wrecks/map_garage.webp";
 import { enterLandscape, useControlPrefs, useDevice } from "@/game/device";
 import { ControlSettings, RotateOverlay, TouchControls, type Joy } from "@/game/TouchControls";
 
@@ -205,6 +218,10 @@ type Game = {
   cam?: { x: number; y: number };
   camT?: number;
   tdm?: Tdm;
+  /* Wreck Garage (night map): pushable car wrecks, lightning, brief blast lights */
+  wrecks?: Wreck[];
+  storm?: Storm;
+  blasts?: { x: number; y: number; t: number }[];
 };
 type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
 type Show = {
@@ -279,6 +296,18 @@ function setWorld(kind: "ffa" | "tdm") {
   for (const b of kind === "tdm" ? TDM_BLOCKS : FFA_BLOCKS) blocks.push([...b]);
   floorCanvas = null; // floor is rebuilt for the new map size
   worldKind = kind;
+  mapKind = "yard"; // switching worlds always restores the yard's blocks
+}
+/** FFA maps: the neon yard (containers) or the night Wreck Garage (no walls, only pushable wrecks) */
+type MapKind = "yard" | "garage";
+let mapKind: MapKind = "yard";
+function setMap(kind: MapKind) {
+  setWorld("ffa");
+  if (kind === mapKind) return;
+  blocks.length = 0;
+  if (kind === "yard") for (const b of FFA_BLOCKS) blocks.push([...b]);
+  floorCanvas = null;
+  mapKind = kind;
 }
 const bulletCol = (tdm: boolean, o: Vehicle) =>
   tdm ? (TEAM_COL[o.team === 1 ? 1 : 0] as string) : o.bot ? PAL.hostile : PAL.friendly;
@@ -480,6 +509,9 @@ function ArenaGame() {
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const startRef = useRef<() => void>(() => {});
+  const [mapSel, setMapSel] = useState<MapKind>("yard");
+  const mapSelRef = useRef<MapKind>("yard");
+  mapSelRef.current = mapSel;
   const [picking, setPicking] = useState(false);
   const pickingRef = useRef(false);
   const askRef = useRef<() => void>(() => {});
@@ -518,7 +550,7 @@ function ArenaGame() {
   }, []);
 
   const startMatch = useCallback(() => {
-    setWorld("ffa");
+    setMap(mapSelRef.current);
     const idx = selectedRef.current;
     mStart("ffa", idx);
     const playerCar = carAt(idx);
@@ -601,6 +633,15 @@ function ArenaGame() {
       spawnT: 1.5,
       ...(player2 ? { player2, kills2: 0 } : null),
     };
+    if (mapKind === "garage") {
+      const g0 = gameRef.current;
+      g0.wrecks = garageLayout(
+        WORLD,
+        g0.cars.map((c) => [c.x, c.y] as [number, number]),
+      );
+      g0.storm = newStorm();
+      g0.blasts = [];
+    }
     keysRef.current.clear();
     pausedRef.current = false;
     setHud({
@@ -1640,6 +1681,78 @@ function ArenaGame() {
         }
         for (const v of g.cars) if (v.alive) collide(v);
       }
+      /* Wreck Garage: lightning, pushable wrecks, burning ones, chain-reaction fuses */
+      const blastWreck = (w: Wreck) => {
+        if (w.hits < 0) return;
+        w.hits = -1;
+        fx.explode(w.x, w.y, "#ff7a1a");
+        fx.explode(w.x, w.y - 18, "#ffd23d");
+        sfx.boom();
+        g.blasts?.push({ x: w.x, y: w.y, t: 0 });
+        if (Math.hypot(w.x - p.x, w.y - p.y) < 900) fx.shake = Math.max(fx.shake, 8);
+        const shooter = w.by as Vehicle | undefined;
+        const reach = WRECK_BLAST_R + 20;
+        for (const v of g.cars) {
+          if (!v.alive || (v.inv ?? 0) > 0) continue;
+          const d = Math.hypot(v.x - w.x, v.y - w.y);
+          if (d > reach) continue;
+          v.hp = v.cloneOf ? 0 : Math.max(0, v.hp - WRECK_BLAST_DMG * (1 - (d / reach) * 0.6));
+          v.hit = 0.14;
+          const nx = (v.x - w.x) / (d || 1),
+            ny = (v.y - w.y) / (d || 1);
+          v.x += nx * 26;
+          v.y += ny * 26;
+          if (shooter && ownerOf(v) !== shooter) {
+            ownerOf(v).atk = shooter;
+            ownerOf(v).atkT = 5;
+          }
+          if (v === p) mDamage();
+          if (!v.bot) fx.shake = Math.max(fx.shake, 6);
+          if (v.hp <= 0) {
+            v.alive = false;
+            fx.explode(v.x, v.y, v.cloneOf ? "#4dd8ff" : carAt(v.carId).color);
+            if (!v.cloneOf && shooter && shooter !== v) {
+              if (shooter === p) {
+                g.kills++;
+                mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
+              } else if (g.player2 && shooter === g.player2) g.kills2 = (g.kills2 ?? 0) + 1;
+            }
+          }
+        }
+        for (const o of g.wrecks ?? []) {
+          if (o === w || o.hits < 0) continue;
+          const d = Math.hypot(o.x - w.x, o.y - w.y);
+          if (d > WRECK_BLAST_R + 70) continue;
+          o.by = w.by;
+          o.hits += 4;
+          o.flash = 1;
+          o.vx += ((o.x - w.x) / (d || 1)) * 380;
+          o.vy += ((o.y - w.y) / (d || 1)) * 380;
+          o.av += (Math.random() - 0.5) * 4;
+          if (o.hits >= WRECK_HITS && o.fuse === undefined) o.fuse = 0.15 + Math.random() * 0.3;
+        }
+      };
+      if (g.wrecks) {
+        if (g.storm) stepStorm(g.storm, dt);
+        stepWrecks(g.wrecks, g.cars, dt, WORLD, blocks, (x, y, hard) => {
+          fx.impact(x, y, 0, "#cdbf9f", hard ? 6 : 3);
+          if (hard && Math.hypot(x - p.x, y - p.y) < 700) sfx.bump();
+        });
+        for (const v of g.cars) if (v.alive) collide(v);
+        for (const w of g.wrecks) {
+          const heat = wreckHeat(w);
+          if (heat > 0.5 && Math.random() < dt * 7 * heat)
+            fx.puff(w.x + (Math.random() - 0.5) * 30, w.y + (Math.random() - 0.5) * 30);
+          if (w.fuse !== undefined) {
+            w.fuse -= dt;
+            if (w.fuse <= 0) blastWreck(w);
+          }
+        }
+        if (g.blasts) {
+          for (const bl of g.blasts) bl.t += dt;
+          g.blasts = g.blasts.filter((bl) => bl.t < 0.7);
+        }
+      }
       // power-up bubbles: spawn, expire, pick up
       g.spawnT -= dt;
       if (g.spawnT <= 0 && g.powerups.length < (tdm ? 6 : 4) && !g.over) {
@@ -1687,6 +1800,20 @@ function ArenaGame() {
         if (blocks.some(([x, y, w, h]) => b.x > x && b.x < x + w && b.y > y && b.y < y + h)) {
           b.life = 0;
           fx.impact(b.x, b.y, dir, PAL.yellow, 6);
+        }
+        if (g.wrecks && b.life > 0) {
+          for (const w of g.wrecks) {
+            if (w.hits < 0 || !wreckContains(w, b.x, b.y)) continue;
+            b.life = 0;
+            w.hits++;
+            w.flash = 1;
+            w.by = ownerOf(b.owner);
+            w.vx += b.vx * 0.04;
+            w.vy += b.vy * 0.04;
+            fx.impact(b.x, b.y, dir, PAL.yellow, 5);
+            if (w.hits >= WRECK_HITS) blastWreck(w);
+            break;
+          }
         }
         for (const v of g.cars) {
           if (
@@ -1778,6 +1905,7 @@ function ArenaGame() {
         }
       }
       g.mines = g.mines.filter((m) => !m.used);
+      if (g.wrecks) g.wrecks = g.wrecks.filter((w) => w.hits >= 0);
       g.bullets = g.bullets.filter(
         (b) => b.life > 0 && b.x > 0 && b.x < WORLD.width && b.y > 0 && b.y < WORLD.height,
       );
@@ -2010,6 +2138,7 @@ function ArenaGame() {
       }
       // shipping containers + crates (solid obstacles)
       blocks.forEach(([x, y, w, h], i) => drawBox(ctx, x, y, w, h, i));
+      if (g?.wrecks) for (const w of g.wrecks) drawWreck(ctx, w, t);
       // tyre dust, sparks, smoke sit under the cars
       if (g) {
         /* Magnetic Splash landmines */
@@ -2294,6 +2423,30 @@ function ArenaGame() {
       ctx.globalCompositeOperation = "source-over";
       ctx.globalAlpha = 1;
       ctx.restore();
+      if (g?.storm) {
+        /* night: a dark veil with holes for headlights, bullets, pickups, mines and blasts */
+        const lamps = g.cars
+          .filter((c) => c.alive && !(powerOn(c, "ghost") && c !== me0))
+          .map((c) => {
+            const k = carAt(c.carId);
+            return { x: c.x, y: c.y, angle: c.angle, h: k.h, w: k.w };
+          });
+        const glows = [
+          ...g.bullets.map((b) => ({ x: b.x, y: b.y, r: 48, a: 0.6 })),
+          ...g.powerups.map((q) => ({ x: q.x, y: q.y, r: 80, a: 0.55 })),
+          ...g.mines.map((m) => ({ x: m.x, y: m.y, r: 70, a: 0.5 })),
+          ...(g.blasts ?? []).map((bl) => ({
+            x: bl.x,
+            y: bl.y,
+            r: 300,
+            a: 0.95 * (1 - bl.t / 0.7),
+          })),
+          ...g
+            .wrecks!.filter((w) => wreckHeat(w) > 0.6)
+            .map((w) => ({ x: w.x, y: w.y, r: 110, a: 0.35 * wreckHeat(w) })),
+        ];
+        drawNight(ctx, width, height, ox, oy, zoom, lamps, glows, g.storm.flash);
+      }
       // screen-space vignette for depth, plus a red heartbeat when the player is nearly dead
       const vg = ctx.createRadialGradient(
         width / 2,
@@ -3072,6 +3225,29 @@ function ArenaGame() {
                 <span>SELECT MODE{twoP ? " · BOTH PLAYERS JOIN" : ""}</span>
               </div>
               <div className="win-body center">
+                <div className="map-pick" role="radiogroup" aria-label="FFA map">
+                  {(
+                    [
+                      ["yard", "NEON YARD", null],
+                      ["garage", "WRECK GARAGE", garageThumb],
+                    ] as [MapKind, string, string | null][]
+                  ).map(([id, name, img]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      role="radio"
+                      aria-checked={mapSel === id}
+                      className={`map-card${mapSel === id ? " on" : ""}`}
+                      onClick={() => setMapSel(id)}
+                    >
+                      <span
+                        className={`map-thumb thumb-${id}`}
+                        style={img ? { backgroundImage: `url(${img})` } : undefined}
+                      />
+                      <span className="map-name">{name}</span>
+                    </button>
+                  ))}
+                </div>
                 <button
                   type="button"
                   className="arcade-btn start-btn"
@@ -3745,6 +3921,11 @@ function getFloor(): HTMLCanvasElement {
     z = (z + Math.imul(z ^ (z >>> 7), 61 | z)) ^ z;
     return ((z ^ (z >>> 14)) >>> 0) / 4294967296;
   };
+  if (mapKind === "garage") {
+    buildGarageFloor(f, c, rnd);
+    floorCanvas = c;
+    return c;
+  }
   const T = 80;
   f.fillStyle = "#3a3e48";
   f.fillRect(0, 0, c.width, c.height);
@@ -3869,6 +4050,105 @@ function getFloor(): HTMLCanvasElement {
   f.fillRect(0, 0, c.width, c.height);
   floorCanvas = c;
   return c;
+}
+
+/** Wreck Garage floor: cracked, oil-stained concrete slabs with faded parking-bay paint and hazard-striped walls. */
+function buildGarageFloor(f: CanvasRenderingContext2D, c: HTMLCanvasElement, rnd: () => number) {
+  const T = 120;
+  f.fillStyle = "#23262d";
+  f.fillRect(0, 0, c.width, c.height);
+  for (let y = 0; y < c.height; y += T) {
+    for (let x = 0; x < c.width; x += T) {
+      const d = Math.round((rnd() - 0.5) * 12);
+      f.fillStyle = `rgb(${44 + d},${47 + d},${54 + d})`;
+      f.fillRect(x, y, T, T);
+      for (let i = 0; i < 26; i++) {
+        f.fillStyle = rnd() > 0.5 ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.16)";
+        f.fillRect(x + rnd() * T, y + rnd() * T, 1 + rnd() * 2, 1 + rnd() * 2);
+      }
+      f.fillStyle = "rgba(0,0,0,0.45)";
+      f.fillRect(x, y + T - 2, T, 2);
+      f.fillRect(x + T - 2, y, 2, T);
+    }
+  }
+  // faded parking-bay paint
+  f.strokeStyle = "rgba(225,225,215,0.22)";
+  f.lineWidth = 4;
+  for (const [x0, y0, n, vertical] of [
+    [285, 340, 8, true],
+    [1335, 1210, 7, true],
+  ] as [number, number, number, boolean][]) {
+    for (let i = 0; i <= n; i++) {
+      f.beginPath();
+      if (vertical) {
+        f.moveTo(x0 + i * 92, y0);
+        f.lineTo(x0 + i * 92, y0 + 160);
+      }
+      f.stroke();
+    }
+  }
+  // cracks
+  f.strokeStyle = "rgba(0,0,0,0.5)";
+  f.lineWidth = 2;
+  for (let i = 0; i < 46; i++) {
+    let cx = rnd() * c.width,
+      cy = rnd() * c.height,
+      a = rnd() * Math.PI * 2;
+    f.beginPath();
+    f.moveTo(cx, cy);
+    for (let k = 0; k < 7; k++) {
+      a += (rnd() - 0.5) * 1.2;
+      cx += Math.cos(a) * (14 + rnd() * 22);
+      cy += Math.sin(a) * (14 + rnd() * 22);
+      f.lineTo(cx, cy);
+    }
+    f.stroke();
+  }
+  // oil stains and a few wet patches
+  for (let i = 0; i < 60; i++) {
+    const sx = rnd() * c.width,
+      sy = rnd() * c.height,
+      r = 24 + rnd() * 80;
+    const g = f.createRadialGradient(sx, sy, 0, sx, sy, r);
+    g.addColorStop(0, i % 5 === 0 ? "rgba(60,90,130,0.22)" : "rgba(4,5,8,0.4)");
+    g.addColorStop(1, "rgba(4,5,8,0)");
+    f.fillStyle = g;
+    f.fillRect(sx - r, sy - r, r * 2, r * 2);
+  }
+  // hazard-stripe border
+  const band = 22;
+  for (const [bx, by, bw, bh] of [
+    [0, 0, c.width, band],
+    [0, c.height - band, c.width, band],
+    [0, 0, band, c.height],
+    [c.width - band, 0, band, c.height],
+  ] as [number, number, number, number][]) {
+    f.save();
+    f.beginPath();
+    f.rect(bx, by, bw, bh);
+    f.clip();
+    f.fillStyle = "rgba(14,14,18,0.9)";
+    f.fillRect(bx, by, bw, bh);
+    f.fillStyle = "rgba(200,160,40,0.7)";
+    const len = Math.max(bw, bh) + 60;
+    for (let k = -40; k < len; k += 44) {
+      f.beginPath();
+      if (bw > bh) {
+        f.moveTo(bx + k, by + bh);
+        f.lineTo(bx + k + 22, by + bh);
+        f.lineTo(bx + k + 22 + bh, by);
+        f.lineTo(bx + k + bh, by);
+      } else {
+        f.moveTo(bx, by + k);
+        f.lineTo(bx, by + k + 22);
+        f.lineTo(bx + bw, by + k + 22 - bw);
+        f.lineTo(bx + bw, by + k - bw);
+      }
+      f.closePath();
+      f.fill();
+    }
+    f.restore();
+  }
 }
 
 /** "#rrggbb" + alpha → "rgba(r,g,b,a)". Plain rgba() keeps canvas and CSS happy on old Chrome. */
