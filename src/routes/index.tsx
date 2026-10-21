@@ -286,6 +286,25 @@ const TDM_TIME = 600;
 const TDM_RESPAWN = 5;
 const TEAM_COL = ["#38a0ff", "#ff4040"];
 const TEAM_RGB = ["56,160,255", "255,64,64"];
+/** team colours + names per map: the yard is Blue vs Red, the Wreck Garage is Green vs Yellow */
+const TEAM_LOOK = {
+  yard: { col: ["#38a0ff", "#ff4040"], rgb: ["56,160,255", "255,64,64"], name: ["BLUE", "RED"] },
+  garage: {
+    col: ["#34d058", "#ffd21f"],
+    rgb: ["52,208,88", "255,210,31"],
+    name: ["GREEN", "YELLOW"],
+  },
+};
+let teamLook: keyof typeof TEAM_LOOK = "yard";
+function applyTeamLook(kind: keyof typeof TEAM_LOOK) {
+  teamLook = kind;
+  const l = TEAM_LOOK[kind];
+  TEAM_COL[0] = l.col[0] as string;
+  TEAM_COL[1] = l.col[1] as string;
+  TEAM_RGB[0] = l.rgb[0] as string;
+  TEAM_RGB[1] = l.rgb[1] as string;
+}
+const teamName = (i: number) => TEAM_LOOK[teamLook].name[i === 1 ? 1 : 0] as string;
 let worldKind: "ffa" | "tdm" = "ffa";
 function setWorld(kind: "ffa" | "tdm") {
   if (kind === worldKind) return;
@@ -301,6 +320,15 @@ function setWorld(kind: "ffa" | "tdm") {
 /** FFA maps: the neon yard (containers) or the night Wreck Garage (no walls, only pushable wrecks) */
 type MapKind = "yard" | "garage";
 let mapKind: MapKind = "yard";
+/** TDM maps: same garage, stretched to the 3600-wide TDM world */
+function setTdmMap(kind: MapKind) {
+  setWorld("tdm");
+  if (kind === mapKind) return;
+  blocks.length = 0;
+  if (kind === "yard") for (const b of TDM_BLOCKS) blocks.push([...b]);
+  floorCanvas = null;
+  mapKind = kind;
+}
 function setMap(kind: MapKind) {
   setWorld("ffa");
   if (kind === mapKind) return;
@@ -512,6 +540,7 @@ function ArenaGame() {
   const [mapSel, setMapSel] = useState<MapKind>("yard");
   const mapSelRef = useRef<MapKind>("yard");
   mapSelRef.current = mapSel;
+  applyTeamLook(mapSel);
   const [picking, setPicking] = useState(false);
   const pickingRef = useRef(false);
   const askRef = useRef<() => void>(() => {});
@@ -662,7 +691,8 @@ function ArenaGame() {
   /* TDM: 6v6, team = 0 (blue) or 1 (red); the player drives in slot 0 of their team */
   const startTdm = useCallback(
     (team: number, team2?: number) => {
-      setWorld("tdm");
+      setTdmMap(mapSelRef.current);
+      applyTeamLook(mapSelRef.current);
       const idx = selectedRef.current;
       mStart("tdm", idx);
       const idx2 = selected2Ref.current;
@@ -733,6 +763,15 @@ function ArenaGame() {
         tdm: { score: [0, 0], time: 0, limit: TDM_TIME, team, ...(two ? { team2: t2 } : null) },
         ...(player2 ? { player2, kills2: 0 } : null),
       };
+      if (mapKind === "garage") {
+        const g0 = gameRef.current;
+        g0.wrecks = garageLayout(WORLD, [
+          ...TDM_SPAWN.map((sp) => [sp.x, sp.y, SPAWN_R + 90] as [number, number, number]),
+          ...g0.cars.map((c) => [c.x, c.y] as [number, number]),
+        ]);
+        g0.storm = newStorm();
+        g0.blasts = [];
+      }
       keysRef.current.clear();
       pausedRef.current = false;
       setHud({
@@ -2133,7 +2172,7 @@ function ArenaGame() {
           ctx.font = '16px "Press Start 2P", monospace';
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
-          ctx.fillText(tm === 0 ? "BLUE BASE" : "RED BASE", sp.x, sp.y - SPAWN_R - 26);
+          ctx.fillText(`${teamName(tm)} BASE`, sp.x, sp.y - SPAWN_R - 26);
         }
       }
       // shipping containers + crates (solid obstacles)
@@ -2435,6 +2474,7 @@ function ArenaGame() {
           ...g.bullets.map((b) => ({ x: b.x, y: b.y, r: 48, a: 0.6 })),
           ...g.powerups.map((q) => ({ x: q.x, y: q.y, r: 80, a: 0.55 })),
           ...g.mines.map((m) => ({ x: m.x, y: m.y, r: 70, a: 0.5 })),
+          ...(g.tdm ? TDM_SPAWN.map((sp) => ({ x: sp.x, y: sp.y, r: SPAWN_R + 70, a: 0.7 })) : []),
           ...(g.blasts ?? []).map((bl) => ({
             x: bl.x,
             y: bl.y,
@@ -2823,7 +2863,11 @@ function ArenaGame() {
       data-orient={dev.landscape ? "landscape" : "portrait"}
       data-short={dev.short ? "1" : "0"}
     >
-      <section className={`arena-stage mode-${mode}`} aria-label="Car combat arena" style={vars}>
+      <section
+        className={`arena-stage mode-${mode}${mapSel === "garage" ? " tdm-garage" : ""}`}
+        aria-label="Car combat arena"
+        style={vars}
+      >
         <canvas ref={canvasRef} className="arena-canvas" aria-label="Live car combat arena" />
         <div className="crt" aria-hidden="true" />
 
@@ -3158,17 +3202,21 @@ function ArenaGame() {
                         className={`arcade-btn start-btn team-blue-btn ${teams[pi] === 0 ? "picked" : ""}`}
                         onClick={() => chooseTeam(pi, 0)}
                       >
-                        <Shield size={16} /> BLUE <small>{pi ? "4" : "←"}</small>
+                        <Shield size={16} /> {teamName(0)} <small>{pi ? "4" : "←"}</small>
                       </button>
                       <button
                         type="button"
                         className={`arcade-btn start-btn team-red-btn ${teams[pi] === 1 ? "picked" : ""}`}
                         onClick={() => chooseTeam(pi, 1)}
                       >
-                        <Shield size={16} /> RED <small>{pi ? "6" : "→"}</small>
+                        <Shield size={16} /> {teamName(1)} <small>{pi ? "6" : "→"}</small>
                       </button>
                       <span className="team-state">
-                        {(teams[pi] ?? -1) < 0 ? "WAITING…" : teams[pi] === 0 ? "BLUE ✓" : "RED ✓"}
+                        {(teams[pi] ?? -1) < 0
+                          ? "WAITING…"
+                          : teams[pi] === 0
+                            ? `${teamName(0)} ✓`
+                            : `${teamName(1)} ✓`}
                       </span>
                     </div>
                   ))}
@@ -3197,14 +3245,14 @@ function ArenaGame() {
                   className="arcade-btn start-btn team-blue-btn"
                   onClick={() => chooseTeam(0, 0)}
                 >
-                  <Shield size={18} /> BLUE TEAM <small>SPAWN ON THE LEFT · B</small>
+                  <Shield size={18} /> {teamName(0)} TEAM <small>SPAWN ON THE LEFT · B</small>
                 </button>
                 <button
                   type="button"
                   className="arcade-btn start-btn team-red-btn"
                   onClick={() => chooseTeam(0, 1)}
                 >
-                  <Shield size={18} /> RED TEAM <small>SPAWN ON THE RIGHT · R</small>
+                  <Shield size={18} /> {teamName(1)} TEAM <small>SPAWN ON THE RIGHT · R</small>
                 </button>
                 <button
                   type="button"
@@ -3225,7 +3273,7 @@ function ArenaGame() {
                 <span>SELECT MODE{twoP ? " · BOTH PLAYERS JOIN" : ""}</span>
               </div>
               <div className="win-body center">
-                <div className="map-pick" role="radiogroup" aria-label="FFA map">
+                <div className="map-pick" role="radiogroup" aria-label="Map">
                   {(
                     [
                       ["yard", "NEON YARD", null],
@@ -3336,7 +3384,10 @@ function ArenaGame() {
                     <span className="tp-who">
                       PLAYER {pi + 1}
                       {team >= 0 && (
-                        <em style={{ color: TEAM_COL[team] }}> · {team === 0 ? "BLUE" : "RED"}</em>
+                        <em style={{ color: TEAM_COL[team] }}>
+                          {" "}
+                          · {team === 0 ? teamName(0) : teamName(1)}
+                        </em>
                       )}
                     </span>
                     {twoToggle()}
@@ -3447,7 +3498,7 @@ function ArenaGame() {
               {hud.tdm ? (
                 <>
                   <span className="hud-eyebrow">
-                    YOU ARE {hud.tdm.team === 0 ? "BLUE" : "RED"} · 6v6
+                    YOU ARE {hud.tdm.team === 0 ? teamName(0) : teamName(1)} · 6v6
                   </span>
                   <div className="hud-count">
                     <b>{String(hud.kills).padStart(2, "0")}</b>
@@ -3635,7 +3686,7 @@ function ArenaGame() {
                   )}
                 </h1>
                 {result.tdm && (
-                  <p className="result-sub">{`BLUE ${result.tdm.blue} - ${result.tdm.red} RED`}</p>
+                  <p className="result-sub">{`${teamName(0)} ${result.tdm.blue} - ${result.tdm.red} ${teamName(1)}`}</p>
                 )}
                 <div className="two-cols">
                   {([result.two.p1, result.two.p2] as const).map((r, i) => (
@@ -3647,8 +3698,8 @@ function ArenaGame() {
                           <b>
                             {result.tdm
                               ? (i ? (result.tdm.team2 ?? result.tdm.team) : result.tdm.team) === 0
-                                ? "BLUE"
-                                : "RED"
+                                ? teamName(0)
+                                : teamName(1)
                               : `#${String(r.pos).padStart(2, "0")}`}
                           </b>
                         </div>
@@ -3729,7 +3780,7 @@ function ArenaGame() {
                 </h1>
                 <p className="result-sub">
                   {result.tdm
-                    ? `BLUE ${result.tdm.blue} - ${result.tdm.red} RED`
+                    ? `${teamName(0)} ${result.tdm.blue} - ${result.tdm.red} ${teamName(1)}`
                     : result.won
                       ? "THE ARENA IS YOURS."
                       : "THE ARENA CLAIMS ANOTHER."}
@@ -3740,8 +3791,8 @@ function ArenaGame() {
                     <b>
                       {result.tdm
                         ? result.tdm.team === 0
-                          ? "BLUE"
-                          : "RED"
+                          ? teamName(0)
+                          : teamName(1)
                         : `#${String(result.position).padStart(2, "0")}`}
                     </b>
                   </div>
@@ -4074,9 +4125,10 @@ function buildGarageFloor(f: CanvasRenderingContext2D, c: HTMLCanvasElement, rnd
   // faded parking-bay paint
   f.strokeStyle = "rgba(225,225,215,0.22)";
   f.lineWidth = 4;
+  const sx = (c.width - 2400) / 2;
   for (const [x0, y0, n, vertical] of [
-    [285, 340, 8, true],
-    [1335, 1210, 7, true],
+    [285 + sx, 340, 8, true],
+    [1335 + sx, 1210, 7, true],
   ] as [number, number, number, boolean][]) {
     for (let i = 0; i <= n; i++) {
       f.beginPath();

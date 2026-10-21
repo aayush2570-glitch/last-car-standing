@@ -657,3 +657,9 @@ html, body { overscroll-behavior: none; }
 .map-thumb.thumb-yard { background: linear-gradient(135deg, #3a3e48, #4a5060 60%, #2a2d36); position: relative; }
 .map-thumb.thumb-yard::after { content: ""; position: absolute; inset: 22% 18% 30% 30%; background: #c4572b; box-shadow: 46px 20px 0 -6px #2b6cc4; }
 .map-name { display: block; margin-top: 6px; font-size: 9px; letter-spacing: 1px; }
+
+/* Wreck Garage TDM: Green vs Yellow */
+.tdm-garage .tdm-blue { background: #1f9e3c; }
+.tdm-garage .tdm-red { background: #d4a90f; }
+.tdm-garage .mode-pick .team-blue-btn { background: #1f9e3c; border-color: #9af0b0; color: #fff; }
+.tdm-garage .mode-pick .team-red-btn { background: #d4a90f; border-color: #fff0a0; color: #1a1400; }

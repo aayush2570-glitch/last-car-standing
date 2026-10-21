@@ -102,21 +102,24 @@ export function wreckContains(w: Wreck, px: number, py: number, pad = 0): boolea
 /** layout: a few parked lines plus scattered ones, none on top of a car start or inside the given keep-clear spots */
 export function garageLayout(
   world: { width: number; height: number },
-  keepClear: [number, number][],
+  keepClear: [number, number, number?][],
 ): Wreck[] {
   const list: Wreck[] = [];
+  const dx = (world.width - 2400) / 2; // the layout is built for the 2400-wide map and centred on wider ones
   let k = Math.floor(Math.random() * 14);
   const next = () => (k++ * 5 + Math.floor(Math.random() * 3)) % SRC.length;
   const add = (x: number, y: number, a: number) => list.push(makeWreck(x, y, a, next()));
   // parked rows (nose up / down, side by side)
   for (let i = 0; i < 7; i++)
-    add(330 + i * 92, 420, Math.PI * (i % 2 ? 1 : 0) + (Math.random() - 0.5) * 0.12);
-  for (let i = 0; i < 6; i++) add(1380 + i * 94, 1290, (Math.random() - 0.5) * 0.14);
+    add(330 + dx + i * 92, 420, Math.PI * (i % 2 ? 1 : 0) + (Math.random() - 0.5) * 0.12);
+  for (let i = 0; i < 6; i++) add(1380 + dx + i * 94, 1290, (Math.random() - 0.5) * 0.14);
   // a sideways column (cars lined nose to tail)
-  for (let i = 0; i < 5; i++) add(1850, 480 + i * 138, Math.PI / 2 + (Math.random() - 0.5) * 0.1);
-  for (let i = 0; i < 4; i++) add(560, 1020 + i * 138, -Math.PI / 2 + (Math.random() - 0.5) * 0.1);
+  for (let i = 0; i < 5; i++)
+    add(1850 + dx, 480 + i * 138, Math.PI / 2 + (Math.random() - 0.5) * 0.1);
+  for (let i = 0; i < 4; i++)
+    add(560 + dx, 1020 + i * 138, -Math.PI / 2 + (Math.random() - 0.5) * 0.1);
   // random wrecks
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0, n = Math.round((16 * world.width) / 2400); i < n; i++) {
     for (let t = 0; t < 30; t++) {
       const x = 150 + Math.random() * (world.width - 300),
         y = 150 + Math.random() * (world.height - 300);
@@ -125,7 +128,9 @@ export function garageLayout(
       break;
     }
   }
-  return list.filter((w) => keepClear.every(([x, y]) => Math.hypot(w.x - x, w.y - y) > 170));
+  return list.filter((w) =>
+    keepClear.every(([x, y, r]) => Math.hypot(w.x - x, w.y - y) > (r ?? 170)),
+  );
 }
 
 type Rect = [number, number, number, number];
