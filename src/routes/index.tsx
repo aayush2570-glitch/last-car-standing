@@ -1275,7 +1275,6 @@ function ArenaGame() {
           v.inv = 2;
           v.charge = 0;
           v.abT = 0;
-          for (const c of g.cars) if (c.cloneOf === v && c.alive) c.alive = false; // old clones don't follow a respawn
           fx.impact(x, y, 0, TEAM_COL[v.team === 1 ? 1 : 0] as string, 14);
           if (v === p) {
             g.cam = { x, y };
