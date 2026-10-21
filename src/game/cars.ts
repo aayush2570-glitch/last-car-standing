@@ -83,10 +83,10 @@ export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
     kind: "clone",
     label: "VIRTUAL CLONE",
     need: 20,
-    dur: 30,
+    dur: 0,
     color: "#4dd8ff",
     blurb:
-      "20 hits: 4 one-hit clones appear, look identical and shoot for you (their kills are yours)",
+      "20 hits: 2 one-hit clones appear (no timer), look identical and shoot for you (their kills are yours)",
   },
   ghost: {
     kind: "ghost",
@@ -132,7 +132,7 @@ export const TURRET_TURN = 5.5;
 export const TURRET_RANGE = 900;
 
 /** Virtual Clone: how many clones appear, how far (px) from the car they spawn, and the damage of one clone bullet */
-export const CLONE_COUNT = 4;
+export const CLONE_COUNT = 2;
 export const CLONE_SPAWN_R = 85;
 export const CLONE_DAMAGE = 9;
 /** Magnetic Splash landmine: trigger radius (px), arming delay (s), max live mines per driver */

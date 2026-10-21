@@ -1212,6 +1212,8 @@ function ArenaGame() {
       const chargeUp = (o: Vehicle) => {
         const ab = abilityOf(o.carId);
         if (!ab || !o.alive || (o.abT ?? 0) > 0) return;
+        // Virtual Clone has no timer: it can't recharge while any of its clones is still alive
+        if (ab.kind === "clone" && g.cars.some((c) => c.cloneOf === o && c.alive)) return;
         o.charge = (o.charge ?? 0) + 1;
         if (o.charge >= ab.need) {
           o.charge = 0;
@@ -1221,10 +1223,8 @@ function ArenaGame() {
             const own = g.mines.filter((m) => m.owner === o && !m.used);
             for (let i = 0; i < own.length - MINE_MAX; i++) (own[i] as Mine).used = true; // oldest fizzles out
             fx.impact(o.x, o.y, 0, ab.color, 30);
-          } else {
-            o.abT = ab.dur;
-            if (ab.kind === "clone") spawnClones(o);
-          }
+          } else if (ab.kind === "clone") spawnClones(o);
+          else o.abT = ab.dur;
           if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
           if (!o.bot) {
@@ -1275,6 +1275,7 @@ function ArenaGame() {
           v.inv = 2;
           v.charge = 0;
           v.abT = 0;
+          for (const c of g.cars) if (c.cloneOf === v && c.alive) c.alive = false; // old clones don't follow a respawn
           fx.impact(x, y, 0, TEAM_COL[v.team === 1 ? 1 : 0] as string, 14);
           if (v === p) {
             g.cam = { x, y };
@@ -1847,13 +1848,7 @@ function ArenaGame() {
         v.dblT = Math.max(0, v.dblT - dt);
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
       }
-      /* Virtual Clones vanish in a blast when the power runs out; destroyed ones leave the match */
-      for (const c of g.cars) {
-        if (c.cloneOf && c.alive && (c.cloneOf.abT ?? 0) <= 0) {
-          c.alive = false;
-          fx.explode(c.x, c.y, "#4dd8ff");
-        }
-      }
+      /* Virtual Clones have no timer: they stay until shot. Destroyed ones leave the match */
       g.cars = g.cars.filter((c) => !(c.cloneOf && !c.alive));
       /* clones are not cars in the standings: they never count towards "cars left" */
       const alive = g.cars.filter((x) => x.alive && !x.cloneOf).length;
@@ -2322,8 +2317,17 @@ function ArenaGame() {
       /* v2 power meter (bottom centre) and the clone-camera banner */
       const ab = me0 && me0.alive ? abilityOf(me0.carId) : null;
       if (me0 && ab) {
-        const on = (me0.abT ?? 0) > 0;
-        const frac = on ? (me0.abT as number) / ab.dur : (me0.charge ?? 0) / ab.need;
+        const liveClones =
+          ab.kind === "clone"
+            ? (g?.cars ?? []).filter((c) => c.cloneOf === me0 && c.alive).length
+            : 0;
+        const on = ab.kind === "clone" ? liveClones > 0 : (me0.abT ?? 0) > 0;
+        const frac =
+          ab.kind === "clone" && on
+            ? liveClones / CLONE_COUNT
+            : on
+              ? (me0.abT as number) / ab.dur
+              : (me0.charge ?? 0) / ab.need;
         const bw = Math.min(190, width * 0.5),
           bx = width / 2 - bw / 2,
           by = height - 44;
@@ -2346,13 +2350,11 @@ function ArenaGame() {
         ctx.fillStyle = on ? ab.color : "#ffe23d";
         const liveMines =
           ab.kind === "mine" ? (g?.mines ?? []).filter((m) => m.owner === me0).length : 0;
-        const liveClones =
-          ab.kind === "clone"
-            ? (g?.cars ?? []).filter((c) => c.cloneOf === me0 && c.alive).length
-            : 0;
         ctx.fillText(
           on
-            ? `${liveClones ? `${liveClones} CLONES · ` : ""}${Math.ceil(me0.abT as number)}s`
+            ? ab.kind === "clone"
+              ? `${liveClones} CLONE${liveClones > 1 ? "S" : ""}`
+              : `${Math.ceil(me0.abT as number)}s`
             : `${me0.charge ?? 0}/${ab.need}${liveMines ? ` · ${liveMines} MINE${liveMines > 1 ? "S" : ""}` : ""}`,
           bx + bw,
           by - 6,
