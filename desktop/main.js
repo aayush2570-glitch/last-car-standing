@@ -20,6 +20,7 @@ function createWindow() {
     height: 720,
     backgroundColor: "#000000",
     autoHideMenuBar: true,
+    icon: path.join(__dirname, "build", "icon.ico"),
     webPreferences: { contextIsolation: true, autoplayPolicy: "no-user-gesture-required" },
   });
   Menu.setApplicationMenu(null);

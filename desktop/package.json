@@ -15,13 +15,23 @@
   "build": {
     "appId": "com.aayush2570.lastcarstanding",
     "productName": "Last Car Standing",
-    "files": ["main.js", "game/**/*"],
-    "directories": { "buildResources": "build", "output": "dist" },
-    "win": {
-      "target": ["portable"],
-      "icon": "build/icon.png",
-      "signAndEditExecutable": false
+    "files": [
+      "main.js",
+      "build/icon.ico",
+      "game/**/*"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
     },
-    "portable": { "artifactName": "LastCarStanding-${version}-${arch}-portable.exe" }
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "LastCarStanding-${version}-${arch}-portable.exe"
+    }
   }
 }
