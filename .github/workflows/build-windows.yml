@@ -1,0 +1,58 @@
+name: Build Windows .exe
+
+# Runs on every push to main and can be run by hand (Actions tab -> Run workflow).
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --no-audit --no-fund
+      # Same build the itch.io HTML5 package uses: index.html at root, relative paths.
+      - run: npm run build:itch
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build
+          path: itch-dist
+
+  build-windows:
+    needs: build-web
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-build
+          path: desktop/game
+      - name: Build portable exe
+        working-directory: desktop
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: desktop/dist/*.exe
+      - name: Publish exe as a GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-windows-build
+          name: Latest Windows .exe
+          body: Portable Windows build, no install needed. Download the .exe and run it.
+          files: desktop/dist/*.exe
