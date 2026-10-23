@@ -33,3 +33,8 @@ dist-ssr
 itch-dist
 releases
 .output
+
+# Desktop wrapper
+desktop/node_modules
+desktop/dist
+desktop/game
