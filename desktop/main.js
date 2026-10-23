@@ -1,12 +1,12 @@
-const { app, BrowserWindow, protocol, net, Menu } = require("electron");
+// Electron 22 (Chromium 108) — the last Electron that runs on Windows 7 / 8 / 8.1.
+const { app, BrowserWindow, protocol, Menu } = require("electron");
 const path = require("path");
 const fs = require("fs");
-const { pathToFileURL } = require("url");
 
 const GAME_DIR = path.join(__dirname, "game");
 
 // Serve the game from a secure custom origin (app://game/) instead of file://
-// so ES modules, fetch(), the service worker and SPA routing all behave like on the web.
+// so ES modules, fetch(), the service worker and SPA routing behave like on the web.
 protocol.registerSchemesAsPrivileged([
   {
     scheme: "app",
@@ -32,17 +32,17 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-  protocol.handle("app", (request) => {
+  protocol.registerFileProtocol("app", (request, callback) => {
     const { pathname } = new URL(request.url);
     let rel = decodeURIComponent(pathname);
     if (rel === "/" || rel === "") rel = "/index.html";
     let filePath = path.normalize(path.join(GAME_DIR, rel));
-    if (!filePath.startsWith(GAME_DIR)) return new Response("Forbidden", { status: 403 });
+    if (!filePath.startsWith(GAME_DIR)) return callback({ error: -10 });
     // SPA fallback: unknown routes load index.html
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       filePath = path.join(GAME_DIR, "index.html");
     }
-    return net.fetch(pathToFileURL(filePath).toString());
+    callback({ path: filePath });
   });
   createWindow();
 });

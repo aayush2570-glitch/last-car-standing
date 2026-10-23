@@ -6,10 +6,10 @@
 // You can pass additional config via defineConfig({ vite: { ... }, etc... }) if needed.
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
-// Oldest browser we support. Chrome 109 is the last Chrome for Windows 7/8/8.1 and macOS 10.11–10.12.
+// Oldest browser we support. Electron 22 (Chromium 108) is the last Electron for Windows 7/8/8.1.
 // It lacks oklch(), color-mix(), CSS nesting and a handful of newer JS APIs, so the build
 // transpiles JS down to chrome109 and lets lightningcss rewrite modern CSS colour syntax.
-const CHROME = 109;
+const CHROME = 108;
 const chromeTarget = CHROME << 16; // lightningcss encodes versions as major << 16
 
 export default defineConfig({
