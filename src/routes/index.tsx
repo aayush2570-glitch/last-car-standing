@@ -19,6 +19,7 @@ import {
 import {
   PAL,
   cars,
+  allCars,
   carAt,
   drawFallbackCar,
   getSprites,
@@ -46,6 +47,14 @@ import {
   v2Of,
 } from "@/game/cars";
 import { addXp, buyCar, useWallet } from "@/game/xp";
+import {
+  createRoom,
+  joinRoom,
+  LobbyError,
+  type LobbyController,
+  type LobbyState,
+} from "@/game/lobby";
+import { FriendsButton, FriendsModal, LeaveConfirm, LobbyCard } from "@/game/LobbyUI";
 import { MissionToasts, MissionsButton } from "@/game/MissionsUI";
 import {
   mAlive,
@@ -781,6 +790,76 @@ function ArenaGame() {
   };
   const chooseTeamRef = useRef(chooseTeam);
   chooseTeamRef.current = chooseTeam;
+
+  /* ── online lobby: ADD FRIENDS → generate a code / enter a code; everybody connects to the host ── */
+  const [friendsUi, setFriendsUi] = useState<"closed" | "menu" | "leave">("closed");
+  const friendsUiRef = useRef(friendsUi);
+  friendsUiRef.current = friendsUi;
+  const [lobby, setLobby] = useState<LobbyState | null>(null);
+  const lobbyRef = useRef<LobbyController | null>(null);
+  const [friendsBusy, setFriendsBusy] = useState(false);
+  const [friendsErr, setFriendsErr] = useState("");
+  const onLobbyChange = useCallback(
+    (st: LobbyState) => {
+      if (st.status !== "closed") {
+        setLobby(st);
+        return;
+      }
+      lobbyRef.current = null;
+      setLobby(null);
+      setFriendsUi((u) => (u === "leave" ? "closed" : u));
+      const msg =
+        st.reason === "host-left"
+          ? "THE HOST CLOSED THE LOBBY"
+          : st.reason === "expired"
+            ? "LOBBY EXPIRED · NOBODY JOINED"
+            : st.reason === "network"
+              ? "LOBBY CONNECTION LOST"
+              : "";
+      if (msg) say(msg);
+    },
+    [say],
+  );
+  const openRoom = async (make: () => Promise<LobbyController>) => {
+    if (friendsBusy || lobbyRef.current) return;
+    setFriendsBusy(true);
+    setFriendsErr("");
+    try {
+      const c = await make();
+      lobbyRef.current = c;
+      setLobby(c.state);
+      setFriendsUi("closed");
+      sfxRef.current.blip();
+    } catch (e) {
+      const code = e instanceof LobbyError ? e.code : "network";
+      setFriendsErr(
+        {
+          "bad-code": "THAT CODE LOOKS WRONG",
+          "not-found": "NO ROOM WITH THAT CODE (IT MAY HAVE EXPIRED)",
+          full: "THAT ROOM IS FULL (4/4)",
+          timeout: "COULD NOT REACH THE ROOM. TRY AGAIN",
+          network: "CONNECTION PROBLEM. CHECK YOUR INTERNET",
+        }[code],
+      );
+    } finally {
+      setFriendsBusy(false);
+    }
+  };
+  const lobbyOpts = () => ({
+    car: selectedRef.current,
+    carCount: allCars.length,
+    onChange: onLobbyChange,
+  });
+  const generateRoom = () => void openRoom(() => createRoom(lobbyOpts()));
+  const joinRoomCode = (code: string) => void openRoom(() => joinRoom(code, lobbyOpts()));
+  const leaveLobby = () => {
+    lobbyRef.current?.leave();
+    setFriendsUi("closed");
+  };
+  useEffect(() => {
+    lobbyRef.current?.setCar(selected);
+  }, [selected]);
+  useEffect(() => () => lobbyRef.current?.leave(), []);
 
   useEffect(() => {
     pausedRef.current = paused;
@@ -2422,6 +2501,12 @@ function ArenaGame() {
       "enter",
     ];
     const onKey = (e: KeyboardEvent, down: boolean) => {
+      // typing a room code (or a lobby pop-up being open) must not drive the garage
+      if (
+        friendsUiRef.current !== "closed" ||
+        (e.target as HTMLElement | null)?.tagName === "INPUT"
+      )
+        return;
       const key = e.key.toLowerCase();
       if (drive.includes(key)) e.preventDefault();
       if (down) sfxRef.current.unlock();
@@ -2605,6 +2690,16 @@ function ArenaGame() {
               <span className="logo-b">STANDING</span>
             </div>
             <div className="top-right">
+              {mode === "select" && (
+                <FriendsButton
+                  inLobby={!!lobby}
+                  onOpen={() => {
+                    setFriendsErr("");
+                    setFriendsUi("menu");
+                  }}
+                  onLeave={() => setFriendsUi("leave")}
+                />
+              )}
               <span className="credit" title="Your XP, saved on this device">
                 XP <b>{fmtXp(wallet.xp)}</b>
               </span>
@@ -2753,6 +2848,24 @@ function ArenaGame() {
               </div>
             </section>
           </div>
+        )}
+
+        {mode === "select" && lobby && <LobbyCard lobby={lobby} />}
+        {mode === "select" && friendsUi === "menu" && !lobby && (
+          <FriendsModal
+            busy={friendsBusy}
+            error={friendsErr}
+            onGenerate={generateRoom}
+            onJoin={joinRoomCode}
+            onClose={() => setFriendsUi("closed")}
+          />
+        )}
+        {mode === "select" && friendsUi === "leave" && lobby && (
+          <LeaveConfirm
+            host={lobby.role === "host"}
+            onYes={leaveLobby}
+            onNo={() => setFriendsUi("closed")}
+          />
         )}
 
         {mode === "select" && notice && (
