@@ -123,7 +123,17 @@ const mmss = (ms: number) => {
 };
 
 /** the room on the home screen: its code and Player 1 (host), Player 2 ... */
-export function LobbyCard({ lobby }: { lobby: LobbyState }) {
+export function LobbyCard({
+  lobby,
+  map = "yard",
+  onMap,
+  onStart,
+}: {
+  lobby: LobbyState;
+  map?: "yard" | "garage";
+  onMap?: (m: "yard" | "garage") => void;
+  onStart?: (kind: "ffa" | "tdm") => void;
+}) {
   const [now, setNow] = useState(() => Date.now());
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -176,12 +186,52 @@ export function LobbyCard({ lobby }: { lobby: LobbyState }) {
             );
           })}
         </ol>
+        {lobby.role === "host" && onStart && (
+          <div className="lobby-host">
+            <div className="lobby-maps" role="group" aria-label="Map">
+              <button
+                type="button"
+                className={map === "yard" ? "on" : ""}
+                aria-pressed={map === "yard"}
+                onClick={() => onMap?.("yard")}
+              >
+                NEON YARD
+              </button>
+              <button
+                type="button"
+                className={map === "garage" ? "on" : ""}
+                aria-pressed={map === "garage"}
+                onClick={() => onMap?.("garage")}
+              >
+                WRECK GARAGE
+              </button>
+            </div>
+            <button
+              type="button"
+              className="arcade-btn start-btn"
+              disabled={lobby.players.length < 2}
+              onClick={() => onStart("ffa")}
+            >
+              START FFA
+            </button>
+            <button
+              type="button"
+              className="arcade-btn alt-btn"
+              disabled={lobby.players.length < 2}
+              onClick={() => onStart("tdm")}
+            >
+              START TDM
+            </button>
+          </div>
+        )}
         <p className="lobby-hint">
           {lobby.role === "host"
-            ? lobby.expiresAt != null
-              ? `CODE EXPIRES IN ${mmss(lobby.expiresAt - now)} IF NOBODY JOINS`
-              : "FRIENDS TYPE THIS CODE UNDER ADD FRIENDS"
-            : "YOU ARE CONNECTED TO THE HOST"}
+            ? lobby.players.length < 2
+              ? lobby.expiresAt != null
+                ? `CODE EXPIRES IN ${mmss(lobby.expiresAt - now)} IF NOBODY JOINS`
+                : "FRIENDS TYPE THIS CODE UNDER ADD FRIENDS"
+              : "PICK A MAP, THEN START. BOTS FILL UP TO 12 CARS"
+            : "WAITING FOR THE HOST TO START THE MATCH"}
         </p>
       </div>
     </aside>

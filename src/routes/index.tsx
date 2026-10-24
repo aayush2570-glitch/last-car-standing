@@ -77,6 +77,7 @@ import {
   WRECK_HITS,
   drawWreck,
   garageLayout,
+  makeWreck,
   stepWrecks,
   wreckContains,
   wreckHeat,
@@ -159,6 +160,15 @@ type Vehicle = {
   /* last enemy that shot this car (or one of its clones) and how long that memory lasts: clones hunt it first */
   atk?: Vehicle;
   atkT?: number;
+  /* online match: stable id used in snapshots, the guest (pid) who drives this car, kills, finishing place */
+  id?: number;
+  net?: number;
+  k?: number;
+  epos?: number;
+  /* guest side: where the host says this car is (the drawn car glides towards it) */
+  nx?: number;
+  ny?: number;
+  na?: number;
 };
 /** Redline v2 Magnetic Splash landmine: lies on the ground until an enemy touches it (one kill, then it is spent) */
 type Mine = {
@@ -215,6 +225,8 @@ type Game = {
   wrecks?: Wreck[];
   storm?: Storm;
   blasts?: { x: number; y: number; t: number }[];
+  /* online match (host simulates, guests only draw snapshots) */
+  online?: boolean;
 };
 type ShowBullet = { x: number; y: number; vx: number; vy: number; life: number };
 type Show = {
@@ -330,8 +342,14 @@ function setMap(kind: MapKind) {
   floorCanvas = null;
   mapKind = kind;
 }
+/** the car this screen belongs to (online: other humans' shots look hostile too) */
+let viewerCar: Vehicle | null = null;
 const bulletCol = (tdm: boolean, o: Vehicle) =>
-  tdm ? (TEAM_COL[o.team === 1 ? 1 : 0] as string) : o.bot ? PAL.hostile : PAL.friendly;
+  tdm
+    ? (TEAM_COL[o.team === 1 ? 1 : 0] as string)
+    : o.bot || (viewerCar !== null && o !== viewerCar)
+      ? PAL.hostile
+      : PAL.friendly;
 const TARGETS = 7;
 const CAR_RADIUS = 27;
 /** bots drive with the same physics as the player; this scales their top speed (1 = same as player) */
@@ -366,6 +384,208 @@ const P1_COLOR = "56,160,255";
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 /** wrap any angle into [-PI, PI) */
 const wrapAng = (a: number) => a - Math.PI * 2 * Math.floor((a + Math.PI) / (Math.PI * 2));
+
+/* ───────── online match: the host simulates everything, guests send their steering and draw snapshots ───────── */
+type NetIn = { x: number; y: number; f: number; at: number };
+const NO_IN: NetIn = { x: 0, y: 0, f: 0, at: 0 };
+/** who is in the match when the host presses START (index 0 = the host) */
+type OnlineSetup = { players: { pid: number; car: number }[] };
+type GuestNet = { byId: Map<number, Vehicle>; me: number; got: boolean };
+let vidCounter = 0;
+const vid = (v: Vehicle): number => (v.id ??= ++vidCounter);
+const r1 = (n: number) => Math.round(n * 10) / 10;
+const r2 = (n: number) => Math.round(n * 100) / 100;
+const rows = (v: unknown): unknown[][] =>
+  Array.isArray(v) ? (v.filter((x) => Array.isArray(x)) as unknown[][]) : [];
+const nm = (r: unknown[], i: number) => Number(r[i]) || 0;
+
+/** everything a guest needs to draw the match, as plain numbers (sent ~20 times a second) */
+function encodeSnap(g: Game): Record<string, unknown> {
+  const snap: Record<string, unknown> = {
+    t: "gsnap",
+    c: g.cars.map((v) => [
+      vid(v),
+      r1(v.x),
+      r1(v.y),
+      r2(v.angle),
+      Math.round(v.hp),
+      v.alive ? 1 : 0,
+      v.carId,
+      v.team ?? -1,
+      v.hit > 0 ? 1 : 0,
+      v.speedT > 0 ? 1 : 0,
+      v.dblT > 0 ? 1 : 0,
+      r1(v.abT ?? 0),
+      r1(v.blk ?? 0),
+      v.tur === undefined ? null : r2(v.tur),
+      v.bot ? 1 : 0,
+      v.cloneOf ? vid(v.cloneOf) : -1,
+      r1(v.inv ?? 0),
+      Math.ceil(v.respawn ?? 0),
+      r2(v.cooldown),
+      v.k ?? 0,
+    ]),
+    b: g.bullets.map((b) => [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), vid(b.owner), r2(b.life)]),
+    m: g.mines.map((m) => [r1(m.x), r1(m.y), vid(m.owner), r2(m.age), m.used ? 1 : 0]),
+    p: g.powerups.map((q) => [r1(q.x), r1(q.y), POWER_KINDS.indexOf(q.kind), r1(q.life)]),
+  };
+  if (g.wrecks)
+    snap["w"] = g.wrecks.map((w) => [r1(w.x), r1(w.y), r2(w.angle), w.sprite, w.hits, r2(w.flash)]);
+  if (g.storm) snap["s"] = r2(g.storm.flash);
+  if (g.blasts) snap["bl"] = g.blasts.map((b) => [r1(b.x), r1(b.y), r2(b.t)]);
+  if (g.tdm) snap["td"] = [g.tdm.score[0], g.tdm.score[1], r1(g.tdm.time), g.tdm.limit];
+  return snap;
+}
+
+/** guest: fold a snapshot from the host into the local game (cars are reused, so they glide instead of jumping) */
+function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sfx: Sfx) {
+  const first = !gn.got;
+  gn.got = true;
+  const seen = new Set<number>();
+  const cars: Vehicle[] = [];
+  const links: [Vehicle, number][] = [];
+  const events: { v: Vehicle; died: boolean; shot: boolean }[] = [];
+  for (const r of rows(m["c"])) {
+    const id = nm(r, 0);
+    let v = gn.byId.get(id);
+    const fresh = !v || first;
+    if (!v) {
+      v = {
+        x: nm(r, 1),
+        y: nm(r, 2),
+        angle: nm(r, 3),
+        hp: 1,
+        alive: true,
+        cooldown: 0,
+        bot: false,
+        drift: 0,
+        strafe: 0,
+        carId: 0,
+        hit: 0,
+        speedT: 0,
+        dblT: 0,
+        dodgeT: 0,
+        dodgeDir: 1,
+        dodgeAng: 0,
+        react: 0,
+        strafeAng: 0,
+        trail: 0,
+        id,
+      };
+      gn.byId.set(id, v);
+    }
+    seen.add(id);
+    const wasAlive = v.alive,
+      lastCd = v.cooldown;
+    v.nx = nm(r, 1);
+    v.ny = nm(r, 2);
+    v.na = nm(r, 3);
+    if (fresh) {
+      v.x = v.nx;
+      v.y = v.ny;
+      v.angle = v.na;
+    }
+    v.hp = nm(r, 4);
+    v.alive = nm(r, 5) === 1;
+    v.carId = Math.max(0, Math.min(allCars.length - 1, Math.floor(nm(r, 6))));
+    const tm = nm(r, 7);
+    if (tm < 0) delete v.team;
+    else v.team = tm === 1 ? 1 : 0;
+    v.hit = nm(r, 8) ? 0.14 : 0;
+    v.speedT = nm(r, 9) ? 1 : 0;
+    v.dblT = nm(r, 10) ? 1 : 0;
+    v.abT = nm(r, 11);
+    v.blk = nm(r, 12);
+    if (r[13] === null || r[13] === undefined) delete v.tur;
+    else v.tur = nm(r, 13);
+    v.bot = nm(r, 14) === 1;
+    const co = nm(r, 15);
+    if (co >= 0 && r[15] !== undefined) links.push([v, co]);
+    else delete v.cloneOf;
+    v.inv = nm(r, 16);
+    v.respawn = nm(r, 17);
+    v.cooldown = nm(r, 18);
+    v.k = nm(r, 19);
+    if (!fresh)
+      events.push({
+        v,
+        died: wasAlive && !v.alive,
+        shot: v.alive && v.cooldown > lastCd + 0.04,
+      });
+    cars.push(v);
+  }
+  for (const id of [...gn.byId.keys()]) if (!seen.has(id)) gn.byId.delete(id);
+  for (const [v, co] of links) {
+    const o = gn.byId.get(co);
+    if (o) v.cloneOf = o;
+    else delete v.cloneOf;
+  }
+  g.cars = cars;
+  g.player = gn.byId.get(gn.me) ?? g.player;
+  /* sounds and sparks the host only made on its own screen */
+  const cx = g.cam?.x ?? g.player.x,
+    cy = g.cam?.y ?? g.player.y;
+  for (const e of events) {
+    const near = Math.hypot(e.v.x - cx, e.v.y - cy) < 1100;
+    const st = carAt(e.v.carId);
+    if (e.died) {
+      fx.explode(e.v.x, e.v.y, e.v.cloneOf ? "#4dd8ff" : st.color);
+      if (near) sfx.boom();
+    } else if (e.shot) {
+      const a = e.v.angle;
+      fx.muzzle(e.v.x + Math.sin(a) * st.h * 0.57, e.v.y - Math.cos(a) * st.h * 0.57, a, "#3dff7a");
+      if (near) sfx.shot(0.8 + st.fireRate / 200);
+    }
+  }
+  const byOwner = (id: number) => gn.byId.get(id) ?? g.player;
+  g.bullets = rows(m["b"]).map((r) => ({
+    x: nm(r, 0),
+    y: nm(r, 1),
+    vx: nm(r, 2),
+    vy: nm(r, 3),
+    owner: byOwner(nm(r, 4)),
+    life: nm(r, 5),
+    damage: 0,
+  }));
+  g.mines = rows(m["m"])
+    .filter((r) => nm(r, 4) !== 1)
+    .map((r) => ({
+      x: nm(r, 0),
+      y: nm(r, 1),
+      owner: byOwner(nm(r, 2)),
+      age: nm(r, 3),
+      used: false,
+      seen: new Map(),
+    }));
+  g.powerups = rows(m["p"]).map((r) => ({
+    x: nm(r, 0),
+    y: nm(r, 1),
+    kind: POWER_KINDS[nm(r, 2)] ?? "health",
+    life: nm(r, 3),
+  }));
+  if (Array.isArray(m["w"])) {
+    g.wrecks = rows(m["w"]).map((r) => {
+      const w = makeWreck(
+        nm(r, 0),
+        nm(r, 1),
+        nm(r, 2),
+        Math.max(0, Math.min(13, Math.floor(nm(r, 3)))),
+      );
+      w.hits = nm(r, 4);
+      w.flash = nm(r, 5);
+      return w;
+    });
+  }
+  if (g.storm && typeof m["s"] === "number") g.storm.flash = m["s"];
+  if (Array.isArray(m["bl"]))
+    g.blasts = rows(m["bl"]).map((r) => ({ x: nm(r, 0), y: nm(r, 1), t: nm(r, 2) }));
+  const td = m["td"];
+  if (g.tdm && Array.isArray(td)) {
+    g.tdm.score = [Number(td[0]) || 0, Number(td[1]) || 0];
+    g.tdm.time = Number(td[2]) || 0;
+    g.tdm.limit = Number(td[3]) || TDM_TIME;
+  }
+}
 /** segment vs rectangle (slab test) */
 function segHitsRect(
   x1: number,
@@ -464,6 +684,15 @@ function ArenaGame() {
   const anchorRef = useRef<HTMLDivElement>(null);
   const gameRef = useRef<Game | null>(null);
   const keysRef = useRef<Set<string>>(new Set());
+  /* online match state: is this screen in a shared match, inputs from guests (host), snapshot bookkeeping (guest) */
+  const onlineRef = useRef(false);
+  const netRef = useRef<{
+    inputs: Map<number, NetIn>;
+    lastSnap: number;
+    gn: GuestNet | null;
+    lastIn: number;
+    lastInKey: string;
+  }>({ inputs: new Map(), lastSnap: 0, gn: null, lastIn: 0, lastInKey: "" });
   const fxRef = useRef<Fx>(new Fx());
   const sfxRef = useRef<Sfx>(new Sfx());
   const showRef = useRef<Show>({
@@ -483,7 +712,7 @@ function ArenaGame() {
   const pausedRef = useRef(paused);
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
-  const startRef = useRef<() => void>(() => {});
+  const startRef = useRef<(online?: OnlineSetup) => void>(() => {});
   const [mapSel, setMapSel] = useState<MapKind>("yard");
   /* load both map pictures as soon as the game page opens, so the map cards never show up blank */
   useEffect(() => {
@@ -501,61 +730,43 @@ function ArenaGame() {
   const pickingRef = useRef(false);
   const askRef = useRef<() => void>(() => {});
   const raceRef = useRef<() => void>(() => {});
-  const startTdmRef = useRef<(team: number) => void>(() => {});
+  const startTdmRef = useRef<(team: number, online?: OnlineSetup) => void>(() => {});
   const [teamPick, setTeamPick] = useState(false);
   const teamPickRef = useRef(false);
   const setModeSync = useCallback((m: "select" | "playing" | "result" | "race") => {
     modeRef.current = m;
-    if (m === "select") fxRef.current = new Fx(); // drop arena particles so they don't leak into the garage
+    if (m === "select") {
+      fxRef.current = new Fx(); // drop arena particles so they don't leak into the garage
+      if (onlineRef.current) {
+        onlineRef.current = false;
+        lobbyRef.current?.setLocked(false); // the room takes new friends again
+      }
+      netRef.current.inputs.clear();
+      netRef.current.gn = null;
+    }
     setMode(m);
   }, []);
 
-  const startMatch = useCallback(() => {
-    setMap(mapSelRef.current);
-    const idx = selectedRef.current;
-    mStart("ffa", idx);
-    const playerCar = carAt(idx);
-    const player: Vehicle = {
-      x: 1200,
-      y: 860,
-      angle: -Math.PI / 2,
-      hp: playerCar.hp,
-      alive: true,
-      cooldown: 0,
-      bot: false,
-      drift: 0,
-      strafe: 0,
-      carId: idx,
-      hit: 0,
-      speedT: 0,
-      dblT: 0,
-      dodgeT: 0,
-      dodgeDir: 1,
-      dodgeAng: 0,
-      react: 0,
-      strafeAng: 0,
-      trail: 0,
-    };
-    const rivals: Vehicle[] = [];
-    for (let i = 0; i < TOTAL - 1; i++) {
-      let x = 170 + Math.random() * 2060,
-        y = 160 + Math.random() * 1400;
-      if (Math.hypot(x - player.x, y - player.y) < 390) {
-        x = 220 + i * 175;
-        y = i % 2 ? 340 : 1370;
-      }
-      const id = rollV2((i + baseOf(idx) + 1) % cars.length);
-      rivals.push({
-        x,
-        y,
-        angle: Math.random() * Math.PI * 2,
-        hp: carAt(id).hp,
+  const startMatch = useCallback(
+    (online?: OnlineSetup) => {
+      netRef.current.gn = null;
+      netRef.current.inputs.clear();
+      onlineRef.current = !!online;
+      setMap(mapSelRef.current);
+      const idx = selectedRef.current;
+      mStart("ffa", idx);
+      const playerCar = carAt(idx);
+      const player: Vehicle = {
+        x: 1200,
+        y: 860,
+        angle: -Math.PI / 2,
+        hp: playerCar.hp,
         alive: true,
-        cooldown: Math.random() * 1.8,
-        bot: true,
-        drift: Math.random() * 5,
+        cooldown: 0,
+        bot: false,
+        drift: 0,
         strafe: 0,
-        carId: id,
+        carId: idx,
         hit: 0,
         speedT: 0,
         dblT: 0,
@@ -565,50 +776,114 @@ function ArenaGame() {
         react: 0,
         strafeAng: 0,
         trail: 0,
+      };
+      vid(player);
+      /* online: every friend gets a car in a ring around the host's start spot */
+      const extra: Vehicle[] = (online?.players.slice(1) ?? []).map((pl, k) => {
+        const a = ((k + 1) / 4) * Math.PI * 2 + 0.6;
+        return {
+          x: 1200 + Math.cos(a) * 130,
+          y: 860 + Math.sin(a) * 130,
+          angle: a,
+          hp: carAt(pl.car).hp,
+          alive: true,
+          cooldown: 0,
+          bot: false,
+          drift: 0,
+          strafe: 0,
+          carId: pl.car,
+          hit: 0,
+          speedT: 0,
+          dblT: 0,
+          dodgeT: 0,
+          dodgeDir: 1,
+          dodgeAng: 0,
+          react: 0,
+          strafeAng: 0,
+          trail: 0,
+          net: pl.pid,
+          id: ++vidCounter,
+        };
       });
-    }
-    fxRef.current = new Fx();
-    gameRef.current = {
-      player,
-      cars: [player, ...rivals],
-      bullets: [],
-      mines: [],
-      started: performance.now(),
-      lastHud: 0,
-      kills: 0,
-      over: null,
-      trail: 0,
-      powerups: [],
-      spawnT: 1.5,
-    };
-    if (mapKind === "garage") {
-      const g0 = gameRef.current;
-      g0.wrecks = garageLayout(
-        WORLD,
-        g0.cars.map((c) => [c.x, c.y] as [number, number]),
-      );
-      g0.storm = newStorm();
-      g0.blasts = [];
-    }
-    keysRef.current.clear();
-    pausedRef.current = false;
-    setHud({
-      hp: playerCar.hp,
-      alive: TOTAL,
-      kills: 0,
-      time: 0,
-      dots: [],
-    });
-    setPaused(false);
-    if (devRef.current.input === "touch") void enterLandscape();
-    setModeSync("playing");
-    sfxRef.current.blip();
-  }, [setModeSync]);
+      const rivals: Vehicle[] = [];
+      for (let i = 0; i < TOTAL - 1 - extra.length; i++) {
+        let x = 170 + Math.random() * 2060,
+          y = 160 + Math.random() * 1400;
+        if (Math.hypot(x - player.x, y - player.y) < 390) {
+          x = 220 + i * 175;
+          y = i % 2 ? 340 : 1370;
+        }
+        const id = rollV2((i + baseOf(idx) + 1) % cars.length);
+        rivals.push({
+          x,
+          y,
+          angle: Math.random() * Math.PI * 2,
+          hp: carAt(id).hp,
+          alive: true,
+          cooldown: Math.random() * 1.8,
+          bot: true,
+          drift: Math.random() * 5,
+          strafe: 0,
+          carId: id,
+          hit: 0,
+          speedT: 0,
+          dblT: 0,
+          dodgeT: 0,
+          dodgeDir: 1,
+          dodgeAng: 0,
+          react: 0,
+          strafeAng: 0,
+          trail: 0,
+        });
+      }
+      fxRef.current = new Fx();
+      gameRef.current = {
+        player,
+        cars: [player, ...extra, ...rivals],
+        bullets: [],
+        mines: [],
+        started: performance.now(),
+        lastHud: 0,
+        kills: 0,
+        over: null,
+        trail: 0,
+        powerups: [],
+        spawnT: 1.5,
+        ...(online ? { online: true } : null),
+      };
+      if (mapKind === "garage") {
+        const g0 = gameRef.current;
+        g0.wrecks = garageLayout(
+          WORLD,
+          g0.cars.map((c) => [c.x, c.y] as [number, number]),
+        );
+        g0.storm = newStorm();
+        g0.blasts = [];
+      }
+      keysRef.current.clear();
+      pausedRef.current = false;
+      setHud({
+        hp: playerCar.hp,
+        alive: TOTAL,
+        kills: 0,
+        time: 0,
+        dots: [],
+      });
+      setPaused(false);
+      if (devRef.current.input === "touch") void enterLandscape();
+      setModeSync("playing");
+      sfxRef.current.blip();
+    },
+    [setModeSync],
+  );
   startRef.current = startMatch;
 
   /* TDM: 6v6, team = 0 (blue) or 1 (red); the player drives in slot 0 of their team */
   const startTdm = useCallback(
-    (team: number) => {
+    (team: number, online?: OnlineSetup) => {
+      netRef.current.gn = null;
+      netRef.current.inputs.clear();
+      onlineRef.current = !!online;
       setTdmMap(mapSelRef.current);
       applyTeamLook(mapSelRef.current);
       const idx = selectedRef.current;
@@ -643,12 +918,29 @@ function ArenaGame() {
           inv: 1.5,
         };
       };
-      /* the human takes the first slot of their team */
-      const player = make(team, 0, true, idx);
-      const list: Vehicle[] = [player];
-      const taken = (tm: number, slot: number) => tm === team && slot === 0;
+      /* humans take the first slots of their team (online: friends are split evenly, the host keeps their pick) */
+      const slotUsed = [0, 0];
+      const counts = [0, 0];
+      const humans: Vehicle[] = (online?.players ?? [{ pid: -1, car: idx }]).map((pl, i) => {
+        const tm =
+          i === 0
+            ? team
+            : counts[0] === counts[1]
+              ? team
+              : (counts[0] as number) < (counts[1] as number)
+                ? 0
+                : 1;
+        counts[tm] = (counts[tm] as number) + 1;
+        const hv = make(tm, slotUsed[tm] as number, true, i === 0 ? idx : pl.car);
+        slotUsed[tm] = (slotUsed[tm] as number) + 1;
+        if (i > 0) hv.net = pl.pid;
+        vid(hv);
+        return hv;
+      });
+      const player = humans[0] as Vehicle;
+      const list: Vehicle[] = [...humans];
       for (const tm of [team, 1 - team])
-        for (let i = 0; i < 6; i++) if (!taken(tm, i)) list.push(make(tm, i, false));
+        for (let i = slotUsed[tm] as number; i < 6; i++) list.push(make(tm, i, false));
       fxRef.current = new Fx();
       gameRef.current = {
         player,
@@ -663,6 +955,7 @@ function ArenaGame() {
         powerups: [],
         spawnT: 1.5,
         tdm: { score: [0, 0], time: 0, limit: TDM_TIME, team },
+        ...(online ? { online: true } : null),
       };
       if (mapKind === "garage") {
         const g0 = gameRef.current;
@@ -808,6 +1101,12 @@ function ArenaGame() {
       lobbyRef.current = null;
       setLobby(null);
       setFriendsUi((u) => (u === "leave" ? "closed" : u));
+      if (onlineRef.current && modeRef.current === "playing") {
+        // the host is gone: the shared match is over
+        pausedRef.current = false;
+        setPaused(false);
+        setModeSync("select");
+      }
       const msg =
         st.reason === "host-left"
           ? "THE HOST CLOSED THE LOBBY"
@@ -818,7 +1117,7 @@ function ArenaGame() {
               : "";
       if (msg) say(msg);
     },
-    [say],
+    [say, setModeSync],
   );
   const openRoom = async (make: () => Promise<LobbyController>) => {
     if (friendsBusy || lobbyRef.current) return;
@@ -837,6 +1136,7 @@ function ArenaGame() {
           "bad-code": "THAT CODE LOOKS WRONG",
           "not-found": "NO ROOM WITH THAT CODE (IT MAY HAVE EXPIRED)",
           full: "THAT ROOM IS FULL (4/4)",
+          started: "THAT MATCH ALREADY STARTED",
           timeout: "COULD NOT REACH THE ROOM. TRY AGAIN",
           network: "CONNECTION PROBLEM. CHECK YOUR INTERNET",
         }[code],
@@ -846,9 +1146,11 @@ function ArenaGame() {
     }
   };
   const lobbyOpts = () => ({
-    car: selectedRef.current,
+    car: lockedId(selectedRef.current) ? 0 : selectedRef.current,
     carCount: allCars.length,
     onChange: onLobbyChange,
+    onMessage: (m: Record<string, unknown>, from: number) => netMsgRef.current(m, from),
+    onPeerLeft: (pid: number) => dropPlayerRef.current(pid),
   });
   const generateRoom = () => void openRoom(() => createRoom(lobbyOpts()));
   const joinRoomCode = (code: string) => void openRoom(() => joinRoom(code, lobbyOpts()));
@@ -856,9 +1158,193 @@ function ArenaGame() {
     lobbyRef.current?.leave();
     setFriendsUi("closed");
   };
+
+  /* ── online match plumbing ── */
+  /** host: a friend left or quit mid-match, so their car (and its clones) leave the arena */
+  const dropPlayerRef = useRef<(pid: number) => void>(() => {});
+  dropPlayerRef.current = (pid) => {
+    netRef.current.inputs.delete(pid);
+    const g = gameRef.current;
+    if (!g || !g.online) return;
+    g.cars = g.cars.filter((c) => c.net !== pid && c.cloneOf?.net !== pid);
+  };
+  /** guest: the host started a match, build an empty arena that the snapshots will fill */
+  const startGuest = (m: Record<string, unknown>) => {
+    const kind = m["mode"] === "tdm" ? "tdm" : "ffa";
+    const map: MapKind = m["map"] === "garage" ? "garage" : "yard";
+    mapSelRef.current = map;
+    setMapSel(map);
+    applyTeamLook(map);
+    const idx = Math.max(0, Math.min(allCars.length - 1, Math.floor(Number(m["car"]) || 0)));
+    if (kind === "tdm") setTdmMap(map);
+    else setMap(map);
+    mStart(kind, idx);
+    const team = Number(m["team"]) === 1 ? 1 : 0;
+    const myId = Math.floor(Number(m["you"]) || 0);
+    const me: Vehicle = {
+      x: WORLD.width / 2,
+      y: WORLD.height / 2,
+      angle: 0,
+      hp: carAt(idx).hp,
+      alive: true,
+      cooldown: 0,
+      bot: false,
+      drift: 0,
+      strafe: 0,
+      carId: idx,
+      hit: 0,
+      speedT: 0,
+      dblT: 0,
+      dodgeT: 0,
+      dodgeDir: 1,
+      dodgeAng: 0,
+      react: 0,
+      strafeAng: 0,
+      trail: 0,
+      id: myId,
+      ...(kind === "tdm" ? { team } : null),
+    };
+    const g: Game = {
+      player: me,
+      cars: [me],
+      bullets: [],
+      mines: [],
+      started: performance.now(),
+      lastHud: 0,
+      kills: 0,
+      over: null,
+      trail: 0,
+      powerups: [],
+      spawnT: 0,
+      online: true,
+      ...(kind === "tdm"
+        ? { tdm: { score: [0, 0] as [number, number], time: 0, limit: TDM_TIME, team } }
+        : null),
+    };
+    if (map === "garage") {
+      g.wrecks = [];
+      g.storm = newStorm();
+      g.blasts = [];
+    }
+    fxRef.current = new Fx();
+    gameRef.current = g;
+    netRef.current.inputs.clear();
+    netRef.current.gn = { byId: new Map([[myId, me]]), me: myId, got: false };
+    onlineRef.current = true;
+    keysRef.current.clear();
+    pausedRef.current = false;
+    setPaused(false);
+    setHud({
+      hp: me.hp,
+      alive: TOTAL,
+      kills: 0,
+      time: 0,
+      dots: [],
+      ...(kind === "tdm" ? { tdm: { blue: 0, red: 0, left: TDM_TIME, respawn: 0, team } } : null),
+    });
+    setAsk(false);
+    setFriendsUi("closed");
+    if (devRef.current.input === "touch") void enterLandscape();
+    setModeSync("playing");
+    sfxRef.current.blip();
+  };
+  const netMsgRef = useRef<(m: Record<string, unknown>, from: number) => void>(() => {});
+  netMsgRef.current = (m, from) => {
+    const role = lobbyRef.current?.state.role;
+    if (role === "host") {
+      if (m["t"] === "gin")
+        netRef.current.inputs.set(from, {
+          x: clamp(Number(m["x"]) || 0, -1, 1),
+          y: clamp(Number(m["y"]) || 0, -1, 1),
+          f: m["f"] ? 1 : 0,
+          at: performance.now(),
+        });
+      else if (m["t"] === "gquit") dropPlayerRef.current(from);
+    } else if (role === "guest") {
+      if (m["t"] === "gstart") startGuest(m);
+      else if (m["t"] === "gsnap") {
+        const g = gameRef.current,
+          gn = netRef.current.gn;
+        if (g && gn && modeRef.current === "playing")
+          applySnap(g, m, gn, fxRef.current, sfxRef.current);
+      } else if (m["t"] === "gend" && modeRef.current === "playing") {
+        const td = m["tdm"] as
+          { s0?: unknown; s1?: unknown; team?: unknown; draw?: unknown } | undefined;
+        const kills = Math.max(0, Math.floor(Number(m["kills"]) || 0));
+        const tdm: Tdm | undefined = td
+          ? {
+              score: [Number(td.s0) || 0, Number(td.s1) || 0],
+              time: 0,
+              limit: TDM_TIME,
+              team: Number(td.team) === 1 ? 1 : 0,
+              draw: !!td.draw,
+            }
+          : undefined;
+        setHud((h) => ({ ...h, kills }));
+        finishMatch(!!m["won"], Math.floor(Number(m["position"]) || TOTAL), tdm, kills);
+      } else if (
+        m["t"] === "gabort" &&
+        (modeRef.current === "playing" || modeRef.current === "result")
+      ) {
+        pausedRef.current = false;
+        setPaused(false);
+        setModeSync("select");
+        say("THE HOST ENDED THE MATCH");
+      }
+    }
+  };
+  /** host: START MATCH from the lobby card (FFA or TDM, on the map picked there) */
+  const hostStart = (kind: "ffa" | "tdm") => {
+    const L = lobbyRef.current;
+    if (!L || L.state.role !== "host" || modeRef.current !== "select") return;
+    if (L.state.players.length < 2) {
+      say("WAIT FOR A FRIEND TO JOIN");
+      return;
+    }
+    if (lockedId(selectedRef.current)) {
+      const c = carAt(selectedRef.current);
+      say(`BUY ${c.name.toUpperCase()} FIRST (${fmtXp(c.price ?? 0)} XP)`);
+      return;
+    }
+    const pids = L.pids();
+    const setup: OnlineSetup = {
+      players: L.state.players.map((pl, i) => ({
+        pid: pids[i] ?? -1,
+        car: i === 0 ? selectedRef.current : pl.car,
+      })),
+    };
+    L.setLocked(true); // nobody new joins while the match runs
+    if (kind === "tdm") startTdmRef.current(0, setup);
+    else startRef.current(setup);
+    const g = gameRef.current;
+    if (!g) return;
+    for (const v of g.cars)
+      if (v.net !== undefined)
+        L.sendTo(v.net, {
+          t: "gstart",
+          mode: kind,
+          map: mapSelRef.current,
+          you: v.id,
+          car: v.carId,
+          team: v.team ?? 0,
+        });
+  };
+  /** leave a running match: the host ends it for everyone, a guest just drops out */
+  const abandonMatch = () => {
+    pausedRef.current = false;
+    setPaused(false);
+    const L = lobbyRef.current;
+    if (onlineRef.current && L) {
+      if (L.state.role === "host") L.broadcast({ t: "gabort" });
+      else L.send({ t: "gquit" });
+    }
+    setModeSync("select");
+  };
+  const selectedLocked = lockedId(selected);
   useEffect(() => {
-    lobbyRef.current?.setCar(selected);
-  }, [selected]);
+    // locked cars are never offered to the room (friends see only cars you own)
+    if (!selectedLocked) lobbyRef.current?.setCar(selected);
+  }, [selected, selectedLocked]);
   useEffect(() => () => lobbyRef.current?.leave(), []);
 
   useEffect(() => {
@@ -1137,6 +1623,110 @@ function ArenaGame() {
     };
 
     /* ---------- arena (gameplay) ---------- */
+    /** host: tell every friend how their match went */
+    const netEnd = (g: Game, alive: number) => {
+      const L = lobbyRef.current;
+      if (!L) return;
+      const tdm = g.tdm;
+      for (const h of g.cars) {
+        if (h.net === undefined) continue;
+        const msg: Record<string, unknown> = { t: "gend", kills: h.k ?? 0 };
+        if (tdm) {
+          const tm = h.team === 1 ? 1 : 0;
+          msg["won"] = (tdm.score[tm] as number) > (tdm.score[1 - tm] as number);
+          msg["position"] = 1;
+          msg["tdm"] = { s0: tdm.score[0], s1: tdm.score[1], team: tm, draw: !!tdm.draw };
+        } else {
+          msg["won"] = h.epos === undefined && alive <= 1;
+          msg["position"] = h.epos ?? 1;
+        }
+        L.sendTo(h.net, msg);
+      }
+    };
+
+    /** guest: no simulation here, only smoothing what the host sent, sending our steering, and the HUD */
+    const guestStep = (dt: number, now: number) => {
+      const g = gameRef.current,
+        gn = netRef.current.gn;
+      if (!g || !gn) return;
+      const fx = fxRef.current;
+      const k = 1 - Math.exp(-dt * 18);
+      for (const v of g.cars) {
+        if (v.nx === undefined || v.ny === undefined) continue;
+        const ox = v.x,
+          oy = v.y;
+        v.x += (v.nx - v.x) * k;
+        v.y += (v.ny - v.y) * k;
+        if (v.na !== undefined) v.angle += wrapAng(v.na - v.angle) * k;
+        if (dt > 0) {
+          v.vx = (v.vx ?? 0) * 0.65 + ((v.x - ox) / dt) * 0.35;
+          v.vy = (v.vy ?? 0) * 0.65 + ((v.y - oy) / dt) * 0.35;
+        }
+        v.hit = Math.max(0, v.hit - dt);
+        if (v.alive && Math.hypot(v.x - ox, v.y - oy) > 0.5) {
+          v.trail -= dt;
+          if (v.trail <= 0) {
+            v.trail = 0.05;
+            fx.dust(v.x - Math.sin(v.angle) * 32, v.y + Math.cos(v.angle) * 32);
+          }
+        }
+      }
+      for (const b of g.bullets) {
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        b.life -= dt;
+      }
+      g.bullets = g.bullets.filter((b) => b.life > 0);
+      for (const m of g.mines) m.age += dt;
+      if (g.blasts) for (const bl of g.blasts) bl.t += dt;
+      // our steering goes to the host (right away when it changes, otherwise a few times a second)
+      const keys = keysRef.current,
+        joy = joyRef.current;
+      let fwd = Number(anyKey(keys, P1_CTL.up)) - Number(anyKey(keys, P1_CTL.down));
+      let side = Number(anyKey(keys, P1_CTL.right)) - Number(anyKey(keys, P1_CTL.left));
+      if (joy.on && Math.hypot(joy.x, joy.y) > 0.16) {
+        fwd = -joy.y;
+        side = joy.x;
+      }
+      const fire = anyKey(keys, [" ", "5"]) ? 1 : 0;
+      const key = `${r2(side)},${r2(fwd)},${fire}`;
+      const nr = netRef.current;
+      if (key !== nr.lastInKey || now - nr.lastIn > 120) {
+        nr.lastInKey = key;
+        nr.lastIn = now;
+        lobbyRef.current?.send({ t: "gin", x: r2(side), y: r2(fwd), f: fire });
+      }
+      if (now - g.lastHud > 140) {
+        const me = g.player;
+        const alive = g.cars.filter((v) => v.alive && !v.cloneOf).length;
+        const tdm = g.tdm;
+        setHud({
+          hp: Math.ceil(me.hp),
+          alive,
+          kills: me.k ?? 0,
+          time: Math.floor((now - g.started) / 1000),
+          dots: g.cars
+            .filter((v) => v.alive && !v.cloneOf && (v === me || !powerOn(v, "ghost")))
+            .map((v) => ({
+              x: (v.x / WORLD.width) * 100,
+              y: (v.y / WORLD.height) * 100,
+              me: v === me,
+              team: v.team,
+            })),
+          tdm: tdm
+            ? {
+                blue: tdm.score[0],
+                red: tdm.score[1],
+                left: Math.max(0, Math.ceil(tdm.limit - tdm.time)),
+                respawn: me.alive ? 0 : Math.max(1, Math.ceil(me.respawn ?? 0)),
+                team: tdm.team,
+              }
+            : undefined,
+        });
+        g.lastHud = now;
+      }
+    };
+
     const step = (dt: number, now: number) => {
       const g = gameRef.current;
       if (!g) return;
@@ -1144,7 +1734,7 @@ function ArenaGame() {
         sfx = sfxRef.current,
         keys = keysRef.current;
       const p = g.player;
-      const humans = [p];
+      const humans = g.cars.filter((c) => c === p || c.net !== undefined);
       const tdm = g.tdm;
       if (!g.over) {
         if (!tdm && p.alive) mAlive(dt);
@@ -1204,7 +1794,7 @@ function ArenaGame() {
           else o.abT = ab.dur;
           if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
-          if (!o.bot) {
+          if (o === p) {
             sfx.blip();
             fx.shake = Math.max(fx.shake, 5);
           }
@@ -1284,15 +1874,22 @@ function ArenaGame() {
         }
       }
       /* human drivers: arrow keys (or WASD) to drive */
-      const drive = (h: Vehicle, ctl: Ctl) => {
+      const drive = (h: Vehicle, ctl: Ctl, ri?: NetIn) => {
         if (!h.alive || g.over) return;
         const stats = carAt(h.carId);
-        let forward = Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
-        let side = Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
+        let forward = ri ? ri.y : Number(anyKey(keys, ctl.up)) - Number(anyKey(keys, ctl.down));
+        let side = ri ? ri.x : Number(anyKey(keys, ctl.right)) - Number(anyKey(keys, ctl.left));
         // touch joystick: the stick points where the car should go, a light push = slower
         let push = 1;
         const joy = joyRef.current;
-        if (h === p && joy.on) {
+        if (ri) {
+          // a friend's steering arrives as numbers: a light push = slower
+          const mag = Math.hypot(side, forward);
+          if (mag < 0.16) {
+            forward = 0;
+            side = 0;
+          } else if (mag < 1) push = 0.45 + 0.55 * mag;
+        } else if (h === p && joy.on) {
           const mag = Math.hypot(joy.x, joy.y);
           if (mag > 0.16) {
             forward = -joy.y;
@@ -1314,7 +1911,7 @@ function ArenaGame() {
           }
         }
         collide(h);
-        if (anyKey(keys, ctl.fire) && h.cooldown <= 0) {
+        if ((ri ? ri.f > 0 : anyKey(keys, ctl.fire)) && h.cooldown <= 0) {
           const tx = h.x + Math.sin(h.angle) * (stats.h * 0.57),
             ty = h.y - Math.cos(h.angle) * (stats.h * 0.57);
           for (const off of h.dblT > 0 ? [-9, 9] : [0]) {
@@ -1335,6 +1932,15 @@ function ArenaGame() {
         }
       };
       drive(p, { ...P1_CTL, fire: [" ", "5"] });
+      /* friends in an online match: drive their cars from the steering they sent (stale = hands off the wheel) */
+      if (g.online) {
+        const tNow = performance.now();
+        for (const h of g.cars) {
+          if (h.net === undefined) continue;
+          const inp = netRef.current.inputs.get(h.net);
+          drive(h, P1_CTL, inp && tNow - inp.at < 500 ? inp : NO_IN);
+        }
+      }
       /* steering: probe ahead and slide around crates / walls */
       const steer = (v: Vehicle, want: number) => {
         const look = 150;
@@ -1608,7 +2214,7 @@ function ArenaGame() {
             b.y += (dy / d) * push;
             if (pass === 0 && push > 3) {
               fx.impact((a.x + b.x) / 2, (a.y + b.y) / 2, Math.atan2(dx, -dy), PAL.yellow, 3);
-              if (!a.bot || !b.bot) fx.shake = Math.max(fx.shake, 2);
+              if (a === p || b === p) fx.shake = Math.max(fx.shake, 2);
             }
           }
         }
@@ -1640,7 +2246,7 @@ function ArenaGame() {
             ownerOf(v).atkT = 5;
           }
           if (v === p) mDamage();
-          if (!v.bot) fx.shake = Math.max(fx.shake, 6);
+          if (v === p) fx.shake = Math.max(fx.shake, 6);
           if (v.hp <= 0) {
             v.alive = false;
             fx.explode(v.x, v.y, v.cloneOf ? "#4dd8ff" : carAt(v.carId).color);
@@ -1648,7 +2254,7 @@ function ArenaGame() {
               if (shooter === p) {
                 g.kills++;
                 mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
-              }
+              } else if (shooter.net !== undefined) shooter.k = (shooter.k ?? 0) + 1;
             }
           }
         }
@@ -1720,7 +2326,7 @@ function ArenaGame() {
           else if (q.kind === "speed") v.speedT = 10 + Math.random() * 2;
           else v.dblT = 10;
           fx.impact(q.x, q.y, 0, POWER_COLOR[q.kind], 12);
-          if (!v.bot) sfx.blip();
+          if (v === p) sfx.blip();
           if (v === p) mPickup();
         }
       }
@@ -1771,7 +2377,7 @@ function ArenaGame() {
           b.life = 0;
           v.hit = 0.14;
           fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
-          if (!v.bot) {
+          if (v === p) {
             fx.shake = Math.max(fx.shake, 4);
             sfx.hit();
           }
@@ -1789,7 +2395,7 @@ function ArenaGame() {
                   byClone: !!b.owner.cloneOf,
                   ghost: powerOn(p, "ghost"),
                 });
-              }
+              } else if (shooter.net !== undefined) shooter.k = (shooter.k ?? 0) + 1;
               if (tdm) {
                 v.respawn = TDM_RESPAWN;
                 if (!g.over) tdm.score[shooter.team === 1 ? 1 : 0]++;
@@ -1819,7 +2425,7 @@ function ArenaGame() {
           fx.explode(m.x, m.y - 20, "#ff7a1a");
           sfx.boom();
           if (v === p) mDamage();
-          if (!v.bot) fx.shake = Math.max(fx.shake, 6);
+          if (v === p) fx.shake = Math.max(fx.shake, 6);
           if (v.hp <= 0) {
             v.alive = false;
             if (!v.cloneOf) {
@@ -1827,7 +2433,7 @@ function ArenaGame() {
                 g.kills++;
                 mKill({ victimV2: isV2(v.carId), byClone: false, ghost: false });
                 mMine();
-              }
+              } else if (m.owner.net !== undefined) m.owner.k = (m.owner.k ?? 0) + 1;
               if (tdm) {
                 v.respawn = TDM_RESPAWN;
                 if (!g.over) tdm.score[m.owner.team === 1 ? 1 : 0]++;
@@ -1904,7 +2510,7 @@ function ArenaGame() {
           });
           v.tcd = shotInterval(stats) * 1.1;
           fx.muzzle(bx, by, v.tur, abilityOf(v.carId)?.color ?? "#b6ff3d");
-          if (!v.bot && Math.hypot(v.x - (g.cam?.x ?? v.x), v.y - (g.cam?.y ?? v.y)) < 1100)
+          if (v === p && Math.hypot(v.x - (g.cam?.x ?? v.x), v.y - (g.cam?.y ?? v.y)) < 1100)
             sfx.shot(0.6 + stats.fireRate / 200);
         }
       }
@@ -1924,7 +2530,16 @@ function ArenaGame() {
       /* a car whose clones are still fighting is not out yet: the camera follows a clone until the last one falls */
       const cloneLive = (h: Vehicle) => g.cars.some((c) => c.cloneOf === h && c.alive);
       if (!g.over) {
-        if (!tdm) {
+        if (!tdm && g.online) {
+          /* online FFA: everybody drives until one car is left (or every human is out); dead friends keep watching */
+          for (const h of humans)
+            if (!h.alive && !cloneLive(h) && h.epos === undefined) h.epos = Math.max(2, alive + 1);
+          const anyHuman = humans.some((h) => h.alive || cloneLive(h));
+          if (!anyHuman || alive <= 1) {
+            const won = p.alive && alive === 1;
+            g.over = { won, position: p.epos ?? 1, t: won ? 1.1 : 1.6 };
+          }
+        } else if (!tdm) {
           if (!p.alive && (!cloneLive(p) || alive === 0))
             g.over = { won: false, position: Math.max(2, alive + 1), t: 1.6 };
           else if (p.alive && alive === 1) g.over = { won: true, position: 1, t: 1.1 };
@@ -1932,9 +2547,14 @@ function ArenaGame() {
       } else {
         g.over.t -= dt;
         if (g.over.t <= 0) {
+          if (g.online) netEnd(g, alive);
           finishMatch(g.over.won, g.over.position, tdm, g.kills);
           return;
         }
+      }
+      if (g.online && now - netRef.current.lastSnap >= 50) {
+        netRef.current.lastSnap = now;
+        lobbyRef.current?.broadcast(encodeSnap(g));
       }
       if (now - g.lastHud > 140) {
         const dots: Dot[] = g.cars
@@ -1993,7 +2613,14 @@ function ArenaGame() {
          (instead of the wrecked car) until the last clone falls */
       const clone =
         me0 && g && !me0.alive ? g.cars.find((c) => c.cloneOf === me0 && c.alive) : undefined;
-      const p = clone ?? me0;
+      /* online FFA: once you are out, watch a friend who is still driving */
+      const spec =
+        me0 && g && g.online && !g.tdm && !me0.alive && !clone
+          ? (g.cars.find((c) => c.alive && !c.cloneOf && c.net !== undefined) ??
+            g.cars.find((c) => c.alive && !c.cloneOf))
+          : undefined;
+      const p = clone ?? spec ?? me0;
+      viewerCar = me0 ?? null;
       const zoom = Math.min(width / 820, height / 560, 1);
       let cx = p ? p.x : WORLD.width / 2,
         cy = p ? p.y : WORLD.height / 2;
@@ -2296,7 +2923,7 @@ function ArenaGame() {
             ctx.fillStyle = "rgba(255,255,255,0.35)";
             ctx.fillRect(v.x - 24, v.y - 48, 48 * pct, 2);
           }
-          if (!v.bot || v === clone) {
+          if (v === me0 || v === clone) {
             // yellow "YOU" tag above the player's car
             const tx = v.x,
               ty = v.y - 66;
@@ -2459,10 +3086,14 @@ function ArenaGame() {
       previous = now;
       const m = modeRef.current,
         t = now / 1000;
-      const running = !(m === "playing" && pausedRef.current);
+      const running = !(m === "playing" && pausedRef.current && !onlineRef.current);
       if (running) fxRef.current.update(dt);
       if (m === "playing") {
-        if (!pausedRef.current) step(dt, now);
+        if (!pausedRef.current || onlineRef.current) {
+          // online: the world never waits for one player's menu
+          if (netRef.current.gn) guestStep(dt, now);
+          else step(dt, now);
+        }
         renderArena(t);
       } else if (m === "race") {
         /* SPEED mode renders on its own canvas */
@@ -2850,7 +3481,17 @@ function ArenaGame() {
           </div>
         )}
 
-        {mode === "select" && lobby && <LobbyCard lobby={lobby} />}
+        {mode === "select" && lobby && (
+          <LobbyCard
+            lobby={lobby}
+            map={mapSel}
+            onMap={(mp) => {
+              setMapSel(mp);
+              sfxRef.current.blip();
+            }}
+            onStart={hostStart}
+          />
+        )}
         {mode === "select" && friendsUi === "menu" && !lobby && (
           <FriendsModal
             busy={friendsBusy}
@@ -3134,22 +3775,14 @@ function ArenaGame() {
                     <h2 className="big-title">
                       MATCH
                       <br />
-                      <em>PAUSED</em>
+                      <em>{onlineRef.current ? "MENU" : "PAUSED"}</em>
                     </h2>
                     {touchUi && <ControlSettings prefs={ctl} />}
                     <button type="button" className="arcade-btn start-btn" onClick={togglePause}>
                       <Play size={16} /> RESUME
                     </button>
-                    <button
-                      type="button"
-                      className="arcade-btn alt-btn"
-                      onClick={() => {
-                        pausedRef.current = false;
-                        setPaused(false);
-                        setModeSync("select");
-                      }}
-                    >
-                      ABANDON MATCH
+                    <button type="button" className="arcade-btn alt-btn" onClick={abandonMatch}>
+                      {onlineRef.current ? "LEAVE MATCH" : "ABANDON MATCH"}
                     </button>
                   </div>
                 </div>
@@ -3229,21 +3862,23 @@ function ArenaGame() {
                     <b>{String(hud.kills).padStart(2, "0")}</b>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  className="arcade-btn start-btn"
-                  onClick={() =>
-                    result.tdm ? startTdmRef.current(result.tdm.team) : startRef.current()
-                  }
-                >
-                  <Play size={16} /> {result.won ? "PLAY AGAIN" : "CONTINUE?"}
-                </button>
+                {!onlineRef.current && (
+                  <button
+                    type="button"
+                    className="arcade-btn start-btn"
+                    onClick={() =>
+                      result.tdm ? startTdmRef.current(result.tdm.team) : startRef.current()
+                    }
+                  >
+                    <Play size={16} /> {result.won ? "PLAY AGAIN" : "CONTINUE?"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="arcade-btn alt-btn"
                   onClick={() => setModeSync("select")}
                 >
-                  BACK TO GARAGE
+                  {onlineRef.current ? "BACK TO LOBBY" : "BACK TO GARAGE"}
                 </button>
               </div>
             </div>

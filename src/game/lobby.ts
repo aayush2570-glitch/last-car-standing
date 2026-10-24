@@ -34,7 +34,7 @@ export type LobbyState = {
   /** why the lobby closed (status "closed") */
   reason?: "left" | "host-left" | "expired" | "network";
 };
-export type LobbyErrorCode = "bad-code" | "not-found" | "full" | "timeout" | "network";
+export type LobbyErrorCode = "bad-code" | "not-found" | "full" | "started" | "timeout" | "network";
 export class LobbyError extends Error {
   code: LobbyErrorCode;
   constructor(code: LobbyErrorCode) {
@@ -46,12 +46,26 @@ export type LobbyController = {
   readonly state: LobbyState;
   setCar: (car: number) => void;
   leave: () => void;
+  /** guest: send a gameplay message to the host */
+  send: (msg: unknown) => void;
+  /** host: send a gameplay message to every guest */
+  broadcast: (msg: unknown) => void;
+  /** host: send a gameplay message to one guest (pid from `pids()`) */
+  sendTo: (pid: number, msg: unknown) => void;
+  /** host: stable id of every player in `state.players` order (0 = the host); guests get [] */
+  pids: () => number[];
+  /** host: while a match runs nobody new can join (and an empty room does not expire) */
+  setLocked: (locked: boolean) => void;
 };
 export type LobbyOptions = {
   car: number;
   /** highest valid car index + 1 (messages from other players are checked against it) */
   carCount: number;
   onChange: (s: LobbyState) => void;
+  /** gameplay messages (their `t` starts with "g"): host gets them from a guest's pid, a guest from the host (pid 0) */
+  onMessage?: (msg: Record<string, unknown>, from: number) => void;
+  /** host: a guest's connection dropped (their pid) */
+  onPeerLeft?: (pid: number) => void;
   /** test hook: a Peer constructor (the real one is loaded on demand) */
   PeerCtor?: new (id?: string, opts?: PeerOptions) => Peer;
 };
@@ -117,9 +131,11 @@ function openHost(
   return new Promise((resolve, reject) => {
     const peer = new PeerC(ID_PREFIX + code, peerOptions());
     /** index 0 is the host itself (conn = null) */
-    const players: { conn: DataConnection | null; car: number }[] = [
-      { conn: null, car: cleanCar(opts.car, opts.carCount) },
+    const players: { conn: DataConnection | null; car: number; pid: number }[] = [
+      { conn: null, car: cleanCar(opts.car, opts.carCount), pid: 0 },
     ];
+    let nextPid = 1;
+    let locked = false;
     let expiresAt: number | null = null;
     let expireTimer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
@@ -144,6 +160,27 @@ function openHost(
       },
       leave() {
         shutdown("left", "host-left");
+      },
+      send() {
+        /* the host does not send to itself */
+      },
+      broadcast(msg) {
+        if (closed) return;
+        for (const p of players) if (p.conn) send(p.conn, msg);
+      },
+      sendTo(pid, msg) {
+        const p = players.find((x) => x.pid === pid);
+        if (p?.conn && !closed) send(p.conn, msg);
+      },
+      pids() {
+        return players.map((p) => p.pid);
+      },
+      setLocked(v) {
+        locked = v;
+        if (!v && !closed && players.length === 1) armExpiry();
+        if (v) disarmExpiry();
+        ctrl.state = snapshot();
+        opts.onChange(ctrl.state);
       },
     };
     const send = (c: DataConnection, msg: unknown) => {
@@ -233,6 +270,11 @@ function openHost(
         if (!isObj(raw)) return;
         if (raw.t === "hello" && !joined) {
           if (closed) return;
+          if (locked) {
+            send(conn, { t: "started" });
+            setTimeout(() => conn.close(), 300);
+            return;
+          }
           if (players.length >= MAX_PLAYERS) {
             send(conn, { t: "full" });
             setTimeout(() => conn.close(), 300);
@@ -240,23 +282,28 @@ function openHost(
           }
           joined = true;
           clearTimeout(timer);
-          players.push({ conn, car: cleanCar(raw.car, opts.carCount) });
+          players.push({ conn, car: cleanCar(raw.car, opts.carCount), pid: nextPid++ });
           disarmExpiry();
           publish();
         } else if (raw.t === "car" && joined) {
           const p = players.find((x) => x.conn === conn);
-          if (p) {
+          if (p && !locked) {
             p.car = cleanCar(raw.car, opts.carCount);
             publish();
           }
+        } else if (joined && typeof raw.t === "string" && raw.t.startsWith("g")) {
+          const p = players.find((x) => x.conn === conn);
+          if (p) opts.onMessage?.(raw as Record<string, unknown>, p.pid);
         }
       });
       conn.on("close", () => {
         clearTimeout(timer);
         const i = players.findIndex((x) => x.conn === conn);
         if (i > 0 && !closed) {
+          const gone = players[i]!.pid;
           players.splice(i, 1);
-          if (players.length === 1) armExpiry();
+          if (players.length === 1 && !locked) armExpiry();
+          opts.onPeerLeft?.(gone);
           publish();
         }
       });
@@ -299,6 +346,17 @@ export async function joinRoom(rawCode: string, opts: LobbyOptions): Promise<Lob
         left = true;
         finish("left");
       },
+      send(msg) {
+        try {
+          if (conn?.open && !closed) conn.send(msg);
+        } catch {
+          /* connection already gone */
+        }
+      },
+      broadcast() {},
+      sendTo() {},
+      pids: () => [],
+      setLocked() {},
     };
     const destroy = () => {
       try {
@@ -337,6 +395,7 @@ export async function joinRoom(rawCode: string, opts: LobbyOptions): Promise<Lob
       conn.on("data", (raw) => {
         if (!isObj(raw)) return;
         if (raw.t === "full") return fail("full");
+        if (raw.t === "started") return fail("started");
         if (raw.t === "players" && Array.isArray(raw.list)) {
           players = raw.list
             .filter(isObj)
@@ -355,6 +414,8 @@ export async function joinRoom(rawCode: string, opts: LobbyOptions): Promise<Lob
           }
         } else if (raw.t === "closed") {
           finish(raw.reason === "expired" ? "expired" : "host-left");
+        } else if (typeof raw.t === "string" && raw.t.startsWith("g")) {
+          opts.onMessage?.(raw as Record<string, unknown>, 0);
         }
       });
       conn.on("close", () => {
