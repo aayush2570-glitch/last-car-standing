@@ -69,7 +69,15 @@ export function PetsButton({ carId }: { carId: number }) {
                   alt={c.name}
                   style={{ width: c.w * 1.7, height: c.h * 1.7 }}
                 />
-                <img className="pet-fly" src={pet.url} alt={pet.name} />
+                <div
+                  className="pet-fly"
+                  style={{
+                    left: "calc(50% - 32px)",
+                    top: `calc(50% - 32px + ${Math.min(c.w * 1.7 * 0.85, 96)}px)`,
+                  }}
+                >
+                  <img src={pet.url} alt={pet.name} />
+                </div>
               </div>
               <button
                 type="button"

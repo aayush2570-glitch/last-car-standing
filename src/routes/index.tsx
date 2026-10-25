@@ -3249,13 +3249,14 @@ function ArenaGame() {
               const wx = ca * l.x - sa * l.y,
                 wy = sa * l.x + ca * l.y; // car frame → rotated draw frame
               ctx.save();
-              ctx.rotate(-v.angle); // keep the pet upright
+              ctx.rotate(-v.angle); // shadow stays on the ground (unrotated)
               ctx.fillStyle = "rgba(0,0,0,0.22)";
               ctx.beginPath();
               ctx.ellipse(wx + 4, wy + 24, PET_SIZE * 0.32, PET_SIZE * 0.12, 0, 0, Math.PI * 2);
               ctx.fill();
               const ph = (PET_SIZE * pim.naturalHeight) / pim.naturalWidth;
               ctx.translate(wx, wy - 10);
+              ctx.rotate(v.angle); // pet sprites face up, so turning with the car makes it face where the car moves
               ctx.scale(1, l.flap);
               ctx.drawImage(pim, -PET_SIZE / 2, -ph / 2, PET_SIZE, ph);
               ctx.restore();
