@@ -34,7 +34,7 @@ export function MissionsButton() {
   return (
     <>
       <button type="button" className="msn-btn" onClick={() => setOpen(true)}>
-        <Target size={16} /> MISSIONS
+        <Target size={14} /> MISSIONS
       </button>
       {open && state && (
         <div

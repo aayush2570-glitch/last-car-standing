@@ -32,7 +32,7 @@ export function PetsButton({ carId }: { carId: number }) {
   return (
     <>
       <button type="button" className="pet-btn" onClick={() => setOpen(true)}>
-        <PawPrint size={16} /> PETS
+        <PawPrint size={14} /> PETS
       </button>
       {open && (
         <div className="pet-screen" role="dialog" aria-modal="true" aria-label="Pets">
