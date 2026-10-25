@@ -74,3 +74,11 @@ export function useWallet() {
   const has = useCallback((id: number) => w.owned.includes(id), [w.owned]);
   return { ...w, has };
 }
+
+/** spend XP on something that isn't a car (pets); false if the player can't afford it */
+export function spendXp(price: number): boolean {
+  const xp = readXp();
+  if (xp < price) return false;
+  save(xp - price, readOwned());
+  return true;
+}

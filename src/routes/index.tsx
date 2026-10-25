@@ -50,6 +50,23 @@ import {
   v2Of,
 } from "@/game/cars";
 import { addXp, buyCar, useWallet } from "@/game/xp";
+import { PetsButton } from "@/game/PetsUI";
+import {
+  PET_BOT_CHANCE,
+  PET_FLY_DAMAGE,
+  PET_FLY_RANGE,
+  PET_FLY_RATE,
+  PET_HEAL,
+  PET_RED_ZONE,
+  PET_SHIELD_TAKE,
+  PET_SHIELD_TIME,
+  PET_SIZE,
+  equippedPet,
+  petImg,
+  petLocal,
+  randomPet,
+  type PetKind,
+} from "@/game/pets";
 import {
   createRoom,
   joinRoom,
@@ -167,6 +184,12 @@ type Vehicle = {
   frz?: number;
   tint?: number;
   pa?: number;
+  /* pets: kind it spawned with, spawn done, one-time power spent, RedFly shot timer, Blutle armour seconds left */
+  pet?: PetKind | undefined;
+  petInit?: boolean;
+  petUsed?: boolean;
+  petCd?: number;
+  shd?: number;
   /* online match: stable id used in snapshots, the guest (pid) who drives this car, kills, finishing place */
   id?: number;
   net?: number;
@@ -2552,7 +2575,8 @@ function ArenaGame() {
           ownerOf(v).atkT = 5;
           if (v.cloneOf)
             v.hp = 0; // a Virtual Clone dies to a single bullet
-          else v.hp -= b.damage * (1 - target.armor / 250);
+          else
+            v.hp -= b.damage * (1 - target.armor / 250) * ((v.shd ?? 0) > 0 ? PET_SHIELD_TAKE : 1);
           b.life = 0;
           v.hit = 0.14;
           fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
@@ -2696,6 +2720,68 @@ function ArenaGame() {
           fx.muzzle(bx, by, v.tur, abilityOf(v.carId)?.color ?? "#b6ff3d");
           if (v === p && Math.hypot(v.x - (g.cam?.x ?? v.x), v.y - (g.cam?.y ?? v.y)) < 1100)
             sfx.shot(0.6 + stats.fireRate / 200);
+        }
+      }
+      /* pets spawn with their car (player: the equipped pet, bots: 20% random), die with it, and never race */
+      for (const v of g.cars) {
+        if (!v.alive || v.cloneOf) {
+          v.pet = undefined;
+          v.petInit = false;
+          continue;
+        }
+        if (!v.petInit) {
+          v.petInit = true;
+          v.petUsed = false;
+          v.petCd = 1;
+          v.shd = 0;
+          v.pet =
+            v === p
+              ? (equippedPet() ?? undefined)
+              : v.bot && Math.random() < PET_BOT_CHANCE
+                ? randomPet()
+                : undefined;
+        }
+        if (!v.pet) continue;
+        const pc = carAt(v.carId);
+        v.shd = Math.max(0, (v.shd ?? 0) - dt);
+        const red = v.hp / pc.hp < PET_RED_ZONE;
+        if (red && !v.petUsed && v.pet === "whown") {
+          v.petUsed = true;
+          v.hp = Math.min(pc.hp, v.hp + PET_HEAL);
+          fx.explode(v.x, v.y, "#3dff7a");
+        } else if (red && !v.petUsed && v.pet === "blutle") {
+          v.petUsed = true;
+          v.shd = PET_SHIELD_TIME;
+        } else if (v.pet === "redfly") {
+          v.petCd = (v.petCd ?? 0) - dt;
+          if (v.petCd <= 0) {
+            const l = petLocal(pc.w, 0, 0);
+            const px = v.x + Math.cos(v.angle) * l.x - Math.sin(v.angle) * l.y,
+              py = v.y + Math.sin(v.angle) * l.x + Math.cos(v.angle) * l.y;
+            let foe: Vehicle | undefined,
+              fd = PET_FLY_RANGE;
+            for (const e of g.cars) {
+              if (!e.alive || ownerOf(e) === v || (tdm && e.team === v.team)) continue;
+              const d = Math.hypot(e.x - px, e.y - py);
+              if (d < fd) {
+                fd = d;
+                foe = e;
+              }
+            }
+            if (foe) {
+              const a = Math.atan2(foe.y - py, foe.x - px);
+              g.bullets.push({
+                x: px,
+                y: py,
+                vx: Math.cos(a) * 520,
+                vy: Math.sin(a) * 520,
+                owner: v,
+                life: 1.4,
+                damage: PET_FLY_DAMAGE,
+              });
+              v.petCd = PET_FLY_RATE;
+            } else v.petCd = 0.2;
+          }
         }
       }
       for (const v of g.cars) {
@@ -3120,6 +3206,39 @@ function ArenaGame() {
             ctx.beginPath();
             ctx.arc(0, 0, r + 9, 0, Math.PI * 2);
             ctx.stroke();
+          }
+          if ((v.shd ?? 0) > 0) {
+            // Blutle armour bubble
+            ctx.fillStyle = `rgba(77,216,255,${0.12 + 0.06 * Math.sin(t * 9)})`;
+            ctx.strokeStyle = "rgba(160,240,255,0.9)";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+          if (v.pet) {
+            // floating pet: lazy bob when stopped, fast flutter when moving, travels with the car
+            const pim = petImg(v.pet);
+            if (pim) {
+              const mv = Math.min(1, Math.hypot(v.vx ?? 0, v.vy ?? 0) / 220);
+              const l = petLocal(car.w, t, mv, v.x * 0.01);
+              const ca = Math.cos(v.angle),
+                sa = Math.sin(v.angle);
+              const wx = ca * l.x - sa * l.y,
+                wy = sa * l.x + ca * l.y; // car frame → rotated draw frame
+              ctx.save();
+              ctx.rotate(-v.angle); // keep the pet upright
+              ctx.fillStyle = "rgba(0,0,0,0.22)";
+              ctx.beginPath();
+              ctx.ellipse(wx + 4, wy + 24, PET_SIZE * 0.32, PET_SIZE * 0.12, 0, 0, Math.PI * 2);
+              ctx.fill();
+              const ph = (PET_SIZE * pim.naturalHeight) / pim.naturalWidth;
+              ctx.translate(wx, wy - 10);
+              ctx.scale(1, l.flap);
+              ctx.drawImage(pim, -PET_SIZE / 2, -ph / 2, PET_SIZE, ph);
+              ctx.restore();
+            }
           }
           if (v.cloneOf && v.cloneOf === me0) {
             // only the clones' own driver sees this faint ring (to tell them apart from enemy lookalikes)
@@ -3557,6 +3676,7 @@ function ArenaGame() {
 
         <MissionToasts />
         {mode === "select" && <MissionsButton />}
+        {mode === "select" && <PetsButton carId={selected} />}
         {mode !== "playing" && mode !== "race" && (
           <header className="top-bar">
             <div className="logo" aria-label="Last Car Standing">
