@@ -3256,7 +3256,7 @@ function ArenaGame() {
               ctx.fill();
               const ph = (PET_SIZE * pim.naturalHeight) / pim.naturalWidth;
               ctx.translate(wx, wy - 10);
-              ctx.rotate(v.angle); // pet sprites face up, so turning with the car makes it face where the car moves
+              ctx.rotate(v.angle + Math.PI); // pet sprites face down, so +180° makes them look the way the car faces
               ctx.scale(1, l.flap);
               ctx.drawImage(pim, -PET_SIZE / 2, -ph / 2, PET_SIZE, ph);
               ctx.restore();
@@ -3461,8 +3461,8 @@ function ArenaGame() {
       if (modeRef.current === "playing" && gap < 250) {
         gapAvg += (gap - gapAvg) * 0.08;
         slowFor = gapAvg > 26 ? slowFor + gap : 0; // under ~38 fps
-        if (slowFor > 1500 && ratioCap > 0.6) {
-          ratioCap = ratioCap > 1 ? 1 : ratioCap > 0.75 ? 0.75 : 0.6;
+        if (slowFor > 1500 && ratioCap > 1.5) {
+          ratioCap = 1.5; // never drop below this: lower resolutions make the game look blurry
           slowFor = 0;
           gapAvg = 16;
           resize();

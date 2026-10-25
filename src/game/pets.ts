@@ -58,11 +58,13 @@ export const randomPet = (): PetKind => PETS[Math.floor(Math.random() * PETS.len
 
 /** where the pet hovers, in the car's own frame (x right, y down). `moving` 0..1 swaps the lazy bob for a fast flutter */
 export function petLocal(carW: number, t: number, moving: number, phase = 0) {
-  const slow = Math.sin(t * 2.4 + phase) * 5;
-  const fast = Math.sin(t * 11 + phase) * 2.5;
+  // wanders in a slow loop around the host car (faster while the car is moving)
+  const sp = 1 + moving * 0.8;
+  const R = carW * 0.95;
+  const a = t * 0.9 * sp + phase;
   return {
-    x: carW * 0.85 + Math.sin(t * 1.3 + phase) * 3,
-    y: -4 + slow * (1 - moving) + fast * moving,
+    x: Math.sin(a) * R + Math.sin(t * 2.3 + phase) * 4,
+    y: -4 + Math.cos(a * 0.8 + 1) * R * 1.25 + Math.sin(t * 2.4 + phase) * 4 * (1 - moving) + Math.sin(t * 11 + phase) * 2.5 * moving,
     flap: 1 + 0.07 * Math.sin(t * (6 + moving * 14)),
   };
 }
