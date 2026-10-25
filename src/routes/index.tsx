@@ -61,9 +61,11 @@ import {
   PET_SHIELD_TAKE,
   PET_SHIELD_TIME,
   PET_SIZE,
+  PETS,
   equippedPet,
   petImg,
   petLocal,
+  petOf,
   randomPet,
   type PetKind,
 } from "@/game/pets";
@@ -449,6 +451,8 @@ type GuestNet = {
   jit: number;
   delay: number;
 };
+/** online host: the pet each friend (by pid) brought along */
+const guestPets = new Map<number, PetKind>();
 let vidCounter = 0;
 const vid = (v: Vehicle): number => (v.id ??= ++vidCounter);
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -485,6 +489,8 @@ function encodeSnap(g: Game, withWrecks = true, ht = 0): Record<string, unknown>
       v.k ?? 0,
       r2(v.tint ?? 0),
       r2(v.frz ?? 0),
+      PETS.findIndex((x) => x.kind === v.pet) + 1,
+      r1(v.shd ?? 0),
     ]),
     b: g.bullets.map((b) => {
       const sc = b.sc ?? 1; // held / slowed bullets are sent with the speed they really have
@@ -597,6 +603,10 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
     v.k = nm(r, 19);
     v.tint = nm(r, 20);
     v.frz = nm(r, 21);
+    const pk = PETS[nm(r, 22) - 1];
+    if (pk) v.pet = pk.kind;
+    else delete v.pet;
+    v.shd = nm(r, 23);
     if (!fresh)
       events.push({
         v,
@@ -1272,6 +1282,7 @@ function ArenaGame() {
   /** guest: the host started a match, build an empty arena that the snapshots will fill */
   const startGuest = (m: Record<string, unknown>) => {
     const kind = m["mode"] === "tdm" ? "tdm" : "ffa";
+    lobbyRef.current?.send({ t: "gpet", pet: equippedPet() }); // tell the host which pet rides with this car
     const map: MapKind = m["map"] === "garage" ? "garage" : "yard";
     mapSelRef.current = map;
     setMapSel(map);
@@ -1368,6 +1379,14 @@ function ArenaGame() {
           at: performance.now(),
         });
       else if (m["t"] === "gquit") dropPlayerRef.current(from);
+      else if (m["t"] === "gpet") {
+        // a friend's equipped pet: remembered for respawns, applied now if their car is already in the match
+        const k = petOf(m["pet"] as PetKind)?.kind;
+        if (k) guestPets.set(from, k);
+        else guestPets.delete(from);
+        const hv = gameRef.current?.cars.find((c) => c.net === from);
+        if (hv?.alive && !hv.petUsed) hv.pet = k;
+      }
     } else if (role === "guest") {
       if (m["t"] === "gstart") startGuest(m);
       else if (m["t"] === "gsnap") {
@@ -2737,9 +2756,11 @@ function ArenaGame() {
           v.pet =
             v === p
               ? (equippedPet() ?? undefined)
-              : v.bot && Math.random() < PET_BOT_CHANCE
-                ? randomPet()
-                : undefined;
+              : v.net !== undefined
+                ? guestPets.get(v.net)
+                : v.bot && Math.random() < PET_BOT_CHANCE
+                  ? randomPet()
+                  : undefined;
         }
         if (!v.pet) continue;
         const pc = carAt(v.carId);
