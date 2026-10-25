@@ -184,6 +184,8 @@ type Vehicle = {
   tvy?: number;
   tva?: number;
   ext?: number;
+  /* guest: recent poses stamped with the host clock; the car is drawn slightly in the past, between two of them */
+  buf?: { t: number; x: number; y: number; a: number }[];
 };
 /** Redline v2 Magnetic Splash landmine: lies on the ground until an enemy touches it (one kill, then it is spent) */
 type Mine = {
@@ -414,7 +416,16 @@ type NetIn = { x: number; y: number; f: number; at: number };
 const NO_IN: NetIn = { x: 0, y: 0, f: 0, at: 0 };
 /** who is in the match when the host presses START (index 0 = the host) */
 type OnlineSetup = { players: { pid: number; car: number }[] };
-type GuestNet = { byId: Map<number, Vehicle>; me: number; got: boolean; last: number };
+type GuestNet = {
+  byId: Map<number, Vehicle>;
+  me: number;
+  got: boolean;
+  last: number;
+  /** smallest (local clock - host clock) seen, how bumpy the arrival times are, and how far behind we draw (ms) */
+  off?: number;
+  jit: number;
+  delay: number;
+};
 let vidCounter = 0;
 const vid = (v: Vehicle): number => (v.id ??= ++vidCounter);
 const r1 = (n: number) => Math.round(n * 10) / 10;
@@ -424,9 +435,10 @@ const rows = (v: unknown): unknown[][] =>
 const nm = (r: unknown[], i: number) => Number(r[i]) || 0;
 
 /** everything a guest needs to draw the match, as plain numbers (sent ~20 times a second) */
-function encodeSnap(g: Game, withWrecks = true): Record<string, unknown> {
+function encodeSnap(g: Game, withWrecks = true, ht = 0): Record<string, unknown> {
   const snap: Record<string, unknown> = {
     t: "gsnap",
+    ht: Math.round(ht * 10) / 10,
     c: g.cars.map((v) => [
       vid(v),
       r1(v.x),
@@ -472,9 +484,16 @@ function encodeSnap(g: Game, withWrecks = true): Record<string, unknown> {
 function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sfx: Sfx) {
   const first = !gn.got;
   gn.got = true;
+  /* line the host's clock up with ours: packets that arrive early set the offset, late ones show up as jitter */
   const nowMs = performance.now();
-  const dtS = clamp((nowMs - gn.last) / 1000, 0.02, 0.3);
-  gn.last = nowMs;
+  const ht = Number(m["ht"]) || nowMs;
+  const o = nowMs - ht;
+  if (gn.off === undefined) gn.off = o;
+  else {
+    gn.jit += (Math.abs(o - gn.off) - gn.jit) * 0.1;
+    gn.off = Math.min(o, gn.off + 0.05);
+  }
+  gn.delay = clamp(90 + 2 * gn.jit, 90, 260);
   const seen = new Set<number>();
   const cars: Vehicle[] = [];
   const links: [Vehicle, number][] = [];
@@ -514,28 +533,19 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
     const px = nm(r, 1),
       py = nm(r, 2),
       pa = nm(r, 3);
-    // how fast the car really moves (from the last two snapshots), so the screen can keep it gliding between them
-    if (!fresh && v.sx !== undefined && v.sy !== undefined && v.sa !== undefined) {
-      v.tvx = (px - v.sx) / dtS;
-      v.tvy = (py - v.sy) / dtS;
-      v.tva = wrapAng(pa - v.sa) / dtS;
-    } else {
-      v.tvx = 0;
-      v.tvy = 0;
-      v.tva = 0;
+    const buf = (v.buf ??= []);
+    const lastPose = buf[buf.length - 1];
+    if (fresh || (lastPose && Math.hypot(px - lastPose.x, py - lastPose.y) > 320)) {
+      buf.length = 0; // respawn / teleport: don't glide across the map
+      v.x = px;
+      v.y = py;
+      v.angle = pa;
     }
-    v.sx = px;
-    v.sy = py;
-    v.sa = pa;
-    v.ext = 0;
+    buf.push({ t: ht, x: px, y: py, a: pa });
+    if (buf.length > 12) buf.shift();
     v.nx = px;
     v.ny = py;
     v.na = pa;
-    // respawn / teleport: don't glide across the map
-    if (!fresh && Math.hypot(px - v.x, py - v.y) > 320) {
-      v.x = px;
-      v.y = py;
-    }
     if (fresh) {
       v.x = v.nx;
       v.y = v.ny;
@@ -596,9 +606,10 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
     }
   }
   const byOwner = (id: number) => gn.byId.get(id) ?? g.player;
+  const back = gn.delay / 1000; // bullets are drawn as far in the past as the cars
   g.bullets = rows(m["b"]).map((r) => ({
-    x: nm(r, 0),
-    y: nm(r, 1),
+    x: nm(r, 0) - nm(r, 2) * back,
+    y: nm(r, 1) - nm(r, 3) * back,
     vx: nm(r, 2),
     vy: nm(r, 3),
     owner: byOwner(nm(r, 4)),
@@ -1296,7 +1307,14 @@ function ArenaGame() {
     fxRef.current = new Fx();
     gameRef.current = g;
     netRef.current.inputs.clear();
-    netRef.current.gn = { byId: new Map([[myId, me]]), me: myId, got: false, last: 0 };
+    netRef.current.gn = {
+      byId: new Map([[myId, me]]),
+      me: myId,
+      got: false,
+      last: 0,
+      jit: 0,
+      delay: 100,
+    };
     onlineRef.current = true;
     keysRef.current.clear();
     pausedRef.current = false;
@@ -1721,21 +1739,37 @@ function ArenaGame() {
         gn = netRef.current.gn;
       if (!g || !gn) return;
       const fx = fxRef.current;
-      const k = 1 - Math.exp(-dt * 14);
+      // draw every car at the host time "now minus a short delay", between the two snapshots around it
+      const rt = now - (gn.off ?? 0) - gn.delay;
       for (const v of g.cars) {
-        if (v.nx === undefined || v.ny === undefined) continue;
-        // keep moving at the last known speed until the next snapshot arrives (at most 150 ms)
-        v.ext = (v.ext ?? 0) + dt;
-        if (v.ext < 0.15 && v.tvx !== undefined) {
-          v.nx += (v.tvx ?? 0) * dt;
-          v.ny += (v.tvy ?? 0) * dt;
-          if (v.na !== undefined) v.na += (v.tva ?? 0) * dt;
-        }
+        const bf = v.buf;
+        if (!bf || !bf.length) continue;
         const ox = v.x,
           oy = v.y;
-        v.x += (v.nx - v.x) * k;
-        v.y += (v.ny - v.y) * k;
-        if (v.na !== undefined) v.angle += wrapAng(v.na - v.angle) * k;
+        const first = bf[0] as NonNullable<Vehicle["buf"]>[number];
+        const last = bf[bf.length - 1] as NonNullable<Vehicle["buf"]>[number];
+        if (rt <= first.t) {
+          v.x = first.x;
+          v.y = first.y;
+          v.angle = first.a;
+        } else if (rt >= last.t) {
+          // ran out of snapshots (late packet): keep going at the last speed for a moment, never longer than 150 ms
+          const prev = bf.length > 1 ? (bf[bf.length - 2] as typeof last) : last;
+          const span = Math.max(1, last.t - prev.t);
+          const ex = Math.min(rt - last.t, 150);
+          v.x = last.x + ((last.x - prev.x) / span) * ex;
+          v.y = last.y + ((last.y - prev.y) / span) * ex;
+          v.angle = last.a + (wrapAng(last.a - prev.a) / span) * ex;
+        } else {
+          let j = bf.length - 2;
+          while (j > 0 && (bf[j] as typeof last).t > rt) j--;
+          const p0 = bf[j] as typeof last,
+            p1 = bf[j + 1] as typeof last;
+          const f = clamp((rt - p0.t) / Math.max(1, p1.t - p0.t), 0, 1);
+          v.x = p0.x + (p1.x - p0.x) * f;
+          v.y = p0.y + (p1.y - p0.y) * f;
+          v.angle = p0.a + wrapAng(p1.a - p0.a) * f;
+        }
         if (dt > 0) {
           v.vx = (v.vx ?? 0) * 0.65 + ((v.x - ox) / dt) * 0.35;
           v.vy = (v.vy ?? 0) * 0.65 + ((v.y - oy) / dt) * 0.35;
@@ -2706,7 +2740,7 @@ function ArenaGame() {
         netRef.current.lastSnap = now;
         // wrecks move slowly: every other snapshot is enough (halves the bytes in the garage map)
         netRef.current.snapN = (netRef.current.snapN ?? 0) + 1;
-        lobbyRef.current?.broadcast(encodeSnap(g, netRef.current.snapN % 2 === 0));
+        lobbyRef.current?.broadcast(encodeSnap(g, netRef.current.snapN % 2 === 0, now));
       }
       if (now - g.lastHud > 140) {
         const dots: Dot[] = g.cars
