@@ -3696,8 +3696,6 @@ function ArenaGame() {
         <div className="crt" aria-hidden="true" />
 
         <MissionToasts />
-        {mode === "select" && <MissionsButton />}
-        {mode === "select" && <PetsButton carId={selected} />}
         {mode !== "playing" && mode !== "race" && (
           <header className="top-bar">
             <div className="logo" aria-label="Last Car Standing">
@@ -3705,6 +3703,8 @@ function ArenaGame() {
               <span className="logo-b">STANDING</span>
             </div>
             <div className="top-right">
+              {mode === "select" && <MissionsButton />}
+              {mode === "select" && <PetsButton carId={selected} />}
               {mode === "select" && (
                 <FriendsButton
                   inLobby={!!lobby}

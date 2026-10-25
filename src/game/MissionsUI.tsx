@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Check, Target, X } from "lucide-react";
 import { DONE_EVT, defOf, useMissions } from "./missions";
 
@@ -36,58 +37,61 @@ export function MissionsButton() {
       <button type="button" className="msn-btn" onClick={() => setOpen(true)}>
         <Target size={14} /> MISSIONS
       </button>
-      {open && state && (
-        <div
-          className="msn-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Missions"
-          onClick={() => setOpen(false)}
-        >
-          <div className="msn-panel" onClick={(e) => e.stopPropagation()}>
-            <div className="msn-head">
-              <h2>MISSIONS</h2>
-              <button
-                type="button"
-                className="msn-x"
-                onClick={() => setOpen(false)}
-                aria-label="Close missions"
-              >
-                <X size={16} />
-              </button>
+      {open &&
+        state &&
+        createPortal(
+          <div
+            className="msn-overlay"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Missions"
+            onClick={() => setOpen(false)}
+          >
+            <div className="msn-panel" onClick={(e) => e.stopPropagation()}>
+              <div className="msn-head">
+                <h2>MISSIONS</h2>
+                <button
+                  type="button"
+                  className="msn-x"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close missions"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <p className="msn-timer">
+                NEW MISSIONS IN <b>{clock(state.exp - now)}</b>
+              </p>
+              {state.list.map((m) => {
+                const d = defOf(m.id);
+                if (!d) return null;
+                const pct = Math.min(100, Math.round((m.p / d.target) * 100));
+                return (
+                  <div className={`msn-row ${m.done ? "msn-done" : ""}`} key={m.id}>
+                    <div className="msn-top">
+                      <b>{d.name}</b>
+                      <em>+{fmt(d.xp)} XP</em>
+                    </div>
+                    <span className="msn-desc">{d.desc}</span>
+                    <div
+                      className="msn-bar"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={d.target}
+                      aria-valuenow={m.p}
+                    >
+                      <i style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="msn-prog">
+                      {m.done ? "COMPLETED" : `${m.p}/${d.target}${d.unit ? ` ${d.unit}` : ""}`}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-            <p className="msn-timer">
-              NEW MISSIONS IN <b>{clock(state.exp - now)}</b>
-            </p>
-            {state.list.map((m) => {
-              const d = defOf(m.id);
-              if (!d) return null;
-              const pct = Math.min(100, Math.round((m.p / d.target) * 100));
-              return (
-                <div className={`msn-row ${m.done ? "msn-done" : ""}`} key={m.id}>
-                  <div className="msn-top">
-                    <b>{d.name}</b>
-                    <em>+{fmt(d.xp)} XP</em>
-                  </div>
-                  <span className="msn-desc">{d.desc}</span>
-                  <div
-                    className="msn-bar"
-                    role="progressbar"
-                    aria-valuemin={0}
-                    aria-valuemax={d.target}
-                    aria-valuenow={m.p}
-                  >
-                    <i style={{ width: `${pct}%` }} />
-                  </div>
-                  <span className="msn-prog">
-                    {m.done ? "COMPLETED" : `${m.p}/${d.target}${d.unit ? ` ${d.unit}` : ""}`}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

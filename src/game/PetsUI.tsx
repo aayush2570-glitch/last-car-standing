@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
 import { PETS, buyPet, equipPet, petOf, usePets, type PetKind } from "./pets";
 import { carAt, cars } from "./cars";
@@ -34,98 +35,100 @@ export function PetsButton({ carId }: { carId: number }) {
       <button type="button" className="pet-btn" onClick={() => setOpen(true)}>
         <PawPrint size={14} /> PETS
       </button>
-      {open && (
-        <div className="pet-screen" role="dialog" aria-modal="true" aria-label="Pets">
-          <div className="pet-head">
-            <h2>PETS</h2>
-            <span className="credit">
-              XP <b>{fmt(xp)}</b>
-            </span>
-            <button
-              type="button"
-              className="msn-x"
-              onClick={() => setOpen(false)}
-              aria-label="Close pets"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          <div className="pet-stage">
-            <button
-              type="button"
-              className="pet-arrow"
-              onClick={() => step(-1)}
-              aria-label="Previous car"
-            >
-              <ChevronLeft size={20} />
-            </button>
-            <div className={`pet-scene ${driving ? "drive" : ""}`}>
-              <div className="pet-ground" />
-              <img
-                className="pet-car"
-                src={c.url}
-                alt={c.name}
-                style={{ width: c.w * 1.7, height: c.h * 1.7 }}
-              />
-              <img className="pet-fly" src={pet.url} alt={pet.name} />
+      {open &&
+        createPortal(
+          <div className="pet-screen" role="dialog" aria-modal="true" aria-label="Pets">
+            <div className="pet-head">
+              <h2>PETS</h2>
+              <span className="credit">
+                XP <b>{fmt(xp)}</b>
+              </span>
+              <button
+                type="button"
+                className="msn-x"
+                onClick={() => setOpen(false)}
+                aria-label="Close pets"
+              >
+                <X size={16} />
+              </button>
             </div>
-            <button
-              type="button"
-              className="pet-arrow"
-              onClick={() => step(1)}
-              aria-label="Next car"
-            >
-              <ChevronRight size={20} />
+            <div className="pet-stage">
+              <button
+                type="button"
+                className="pet-arrow"
+                onClick={() => step(-1)}
+                aria-label="Previous car"
+              >
+                <ChevronLeft size={20} />
+              </button>
+              <div className={`pet-scene ${driving ? "drive" : ""}`}>
+                <div className="pet-ground" />
+                <img
+                  className="pet-car"
+                  src={c.url}
+                  alt={c.name}
+                  style={{ width: c.w * 1.7, height: c.h * 1.7 }}
+                />
+                <img className="pet-fly" src={pet.url} alt={pet.name} />
+              </div>
+              <button
+                type="button"
+                className="pet-arrow"
+                onClick={() => step(1)}
+                aria-label="Next car"
+              >
+                <ChevronRight size={20} />
+              </button>
+            </div>
+            <p className="pet-carname">{c.name}</p>
+            <button type="button" className="pet-drive" onClick={() => setDriving((d) => !d)}>
+              {driving ? "STOP CAR" : "DRIVE CAR"}
             </button>
-          </div>
-          <p className="pet-carname">{c.name}</p>
-          <button type="button" className="pet-drive" onClick={() => setDriving((d) => !d)}>
-            {driving ? "STOP CAR" : "DRIVE CAR"}
-          </button>
-          <div className="pet-list">
-            {PETS.map((p) => {
-              const owned = has(p.kind);
-              const on = sel === p.kind;
-              return (
-                <div
-                  key={p.kind}
-                  className={`pet-card ${view === p.kind ? "active" : ""}`}
-                  onClick={() => setView(p.kind)}
-                  style={{ borderColor: view === p.kind ? p.color : "#000" }}
-                >
-                  <img src={p.url} alt="" />
-                  <b style={{ color: p.color }}>{p.name}</b>
-                  <span>{p.blurb}</span>
-                  {owned ? (
-                    <button
-                      type="button"
-                      className={`pet-act ${on ? "on" : ""}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        equipPet(on ? null : p.kind);
-                      }}
-                    >
-                      {on ? "EQUIPPED" : "EQUIP"}
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      className="pet-act buy"
-                      disabled={xp < p.price}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        buyPet(p.kind);
-                      }}
-                    >
-                      BUY · {fmt(p.price)} XP
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+            <div className="pet-list">
+              {PETS.map((p) => {
+                const owned = has(p.kind);
+                const on = sel === p.kind;
+                return (
+                  <div
+                    key={p.kind}
+                    className={`pet-card ${view === p.kind ? "active" : ""}`}
+                    onClick={() => setView(p.kind)}
+                    style={{ borderColor: view === p.kind ? p.color : "#000" }}
+                  >
+                    <img src={p.url} alt="" />
+                    <b style={{ color: p.color }}>{p.name}</b>
+                    <span>{p.blurb}</span>
+                    {owned ? (
+                      <button
+                        type="button"
+                        className={`pet-act ${on ? "on" : ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          equipPet(on ? null : p.kind);
+                        }}
+                      >
+                        {on ? "EQUIPPED" : "EQUIP"}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="pet-act buy"
+                        disabled={xp < p.price}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          buyPet(p.kind);
+                        }}
+                      >
+                        BUY · {fmt(p.price)} XP
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }
