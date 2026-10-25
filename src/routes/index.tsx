@@ -3251,8 +3251,9 @@ function ArenaGame() {
               const pdt = Math.min(0.05, Math.max(0, t - q.t));
               q.t = t;
               const l = petLocal(cw, t, 0, v.x * 0.01);
-              const ox = cw * 0.85 + l.x * 0.25,
-                oy = -cw * 0.1 + l.y * 0.25;
+              const orb = t * 1.1 + v.x * 0.01; // circles its car, so it turns to face every direction
+              const ox = Math.cos(orb) * cw * 0.95,
+                oy = Math.sin(orb) * cw * 1.15 - cw * 0.1;
               const tx = v.x + Math.cos(v.angle) * ox - Math.sin(v.angle) * oy,
                 ty = v.y + Math.sin(v.angle) * ox + Math.cos(v.angle) * oy;
               if (Math.hypot(tx - q.x, ty - q.y) > 350) {
@@ -3266,14 +3267,8 @@ function ArenaGame() {
               q.y += q.vy * pdt;
               const sp = Math.hypot(q.vx, q.vy);
               // look where it is flying; when it hovers, look where the car looks
-              const aim = sp > 30 ? Math.atan2(q.vx, -q.vy) : v.angle;
-              q.a += wrapAng(aim - q.a) * Math.min(1, pdt * 9);
-              const pcol = petOf(v.pet)?.color ?? "#fff";
-              q.tr -= pdt;
-              if (q.tr <= 0 && !g.over) {
-                q.tr = sp > 40 ? 0.035 : 0.12;
-                fxRef.current.pet(q.x, q.y - 10, pcol);
-              }
+              const aim = sp > 12 ? Math.atan2(q.vx, -q.vy) : v.angle;
+              q.a += wrapAng(aim - q.a) * Math.min(1, pdt * 8); // eases to the new heading and stops there
               const wx = q.x - v.x,
                 wy = q.y - v.y;
               ctx.save();

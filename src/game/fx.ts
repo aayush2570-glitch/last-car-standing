@@ -197,22 +197,6 @@ export class Fx {
     });
   }
 
-  /** Small coloured sparkle a pet leaves behind while it flies. */
-  pet(x: number, y: number, color: string) {
-    this.add({
-      kind: "smoke",
-      x: x + rand(-2, 2),
-      y: y + rand(-2, 2),
-      vx: rand(-6, 6),
-      vy: rand(-6, 6),
-      life: rand(0.35, 0.55),
-      color,
-      size: 4,
-      drag: 1.5,
-      grow: -4,
-    });
-  }
-
   /** Tyre dust behind a moving car. */
   dust(x: number, y: number) {
     this.add({

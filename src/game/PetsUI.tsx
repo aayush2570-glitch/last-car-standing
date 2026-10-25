@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
 import { PETS, buyPet, equipPet, petOf, usePets, type PetKind } from "./pets";
@@ -13,6 +13,7 @@ export function PetsButton({ carId }: { carId: number }) {
   const [car, setCar] = useState(carId);
   const [view, setView] = useState<PetKind>("redfly");
   const [driving, setDriving] = useState(false);
+  const flyRef = useRef<HTMLDivElement>(null);
   const { xp } = useWallet();
   const { sel, has } = usePets();
   useEffect(() => {
@@ -27,6 +28,31 @@ export function PetsButton({ carId }: { carId: number }) {
     return () => window.removeEventListener("keydown", keys, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  /* the pet circles the car and turns its face along where it flies (sprite faces down) */
+  useEffect(() => {
+    if (!open) return;
+    let raf = 0,
+      last = performance.now(),
+      t = 0,
+      ang = 0;
+    const pos = (u: number): [number, number] => [Math.cos(u) * 95, Math.sin(u * 1.3) * 62];
+    const loop = (now: number) => {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      t += dt * (driving ? 1.5 : 1);
+      const [x, y] = pos(t);
+      const [x2, y2] = pos(t + 0.05);
+      const aim = Math.atan2(y2 - y, x2 - x);
+      let d = aim - ang;
+      d -= Math.PI * 2 * Math.floor((d + Math.PI) / (Math.PI * 2));
+      ang += d * Math.min(1, dt * 8);
+      const el = flyRef.current;
+      if (el) el.style.transform = `translate(${x}px,${y}px) rotate(${ang - Math.PI / 2}rad)`;
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [open, driving]);
   const c = carAt(car);
   const pet = petOf(view)!;
   const step = (d: number) => setCar((i) => (i + d + cars.length) % cars.length);
@@ -69,14 +95,7 @@ export function PetsButton({ carId }: { carId: number }) {
                   alt={c.name}
                   style={{ width: c.w * 1.7, height: c.h * 1.7 }}
                 />
-                {[0.5, 0.4, 0.3, 0.2, 0.1].map((d, i) => (
-                  <i
-                    key={i}
-                    className="pet-dot"
-                    style={{ background: pet.color, animationDelay: `-${d}s`, opacity: 0.85 - i * 0.14, width: 12 - i * 1.5, height: 12 - i * 1.5 }}
-                  />
-                ))}
-                <div className="pet-fly">
+                <div className="pet-fly" ref={flyRef}>
                   <img src={pet.url} alt={pet.name} />
                 </div>
               </div>
