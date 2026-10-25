@@ -318,14 +318,15 @@ export function drawTracer(
   vx: number,
   vy: number,
   color: string,
+  k = 1,
 ) {
-  const tx = x - vx * 0.045,
-    ty = y - vy * 0.045;
+  const tx = x - vx * 0.045 * k,
+    ty = y - vy * 0.045 * k;
   ctx.globalCompositeOperation = "lighter";
   ctx.lineCap = "round";
   ctx.strokeStyle = color;
   ctx.globalAlpha = 0.35;
-  ctx.lineWidth = 9;
+  ctx.lineWidth = 9 * k;
   ctx.beginPath();
   ctx.moveTo(tx, ty);
   ctx.lineTo(x, y);
@@ -333,19 +334,19 @@ export function drawTracer(
   ctx.globalAlpha = 0.28;
   ctx.fillStyle = color;
   ctx.beginPath();
-  ctx.arc(x, y, 8, 0, Math.PI * 2);
+  ctx.arc(x, y, 8 * k, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 0.9;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = 4 * k;
   ctx.beginPath();
   ctx.moveTo(tx, ty);
   ctx.lineTo(x, y);
   ctx.stroke();
   ctx.strokeStyle = PAL.white;
   ctx.globalAlpha = 1;
-  ctx.lineWidth = 1.6;
+  ctx.lineWidth = 1.6 * k;
   ctx.beginPath();
-  ctx.moveTo(x - vx * 0.02, y - vy * 0.02);
+  ctx.moveTo(x - vx * 0.02 * k, y - vy * 0.02 * k);
   ctx.lineTo(x, y);
   ctx.stroke();
   ctx.lineCap = "butt";

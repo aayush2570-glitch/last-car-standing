@@ -3334,7 +3334,15 @@ function ArenaGame() {
           }
         }
         for (const b of g.bullets)
-          drawTracer(ctx, b.x, b.y, b.vx, b.vy, bulletCol(!!g.tdm, ownerOf(b.owner)));
+          drawTracer(
+            ctx,
+            b.x,
+            b.y,
+            b.vx,
+            b.vy,
+            bulletCol(!!g.tdm, ownerOf(b.owner)),
+            b.damage === PET_FLY_DAMAGE ? 0.45 : 1,
+          );
       }
       fx.draw(ctx);
       const pulse = 0.55 + 0.45 * Math.sin(t * 3);
