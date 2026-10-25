@@ -30,7 +30,7 @@ export const PETS: PetInfo[] = [
     price: 50000,
     url: blutle,
     color: "#4dd8ff",
-    blurb: "Wraps your car in an armour shield when your HP hits the red zone (one time)",
+    blurb: "Wraps your car in an armour shield for 30s when your HP hits the red zone (one time)",
   },
   {
     kind: "whown",
@@ -46,7 +46,7 @@ export const petOf = (k?: PetKind | null) => PETS.find((p) => p.kind === k);
 /** a bot has this chance to spawn with a random pet */
 export const PET_BOT_CHANCE = 0.2;
 export const PET_RED_ZONE = 0.3; // same "red" as the HP bar
-export const PET_SHIELD_TIME = 8; // seconds the Blutle armour lasts
+export const PET_SHIELD_TIME = 30; // seconds the Blutle armour lasts
 export const PET_SHIELD_TAKE = 0.2; // damage that still gets through the armour
 export const PET_HEAL = 50;
 export const PET_FLY_DAMAGE = 1.2; // RedFly bullet damage (a normal bullet does ~3-6)
