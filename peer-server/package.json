@@ -1,0 +1,8 @@
+{
+  "name": "lcs-peer-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "peer": "^1.0.2" }
+}
