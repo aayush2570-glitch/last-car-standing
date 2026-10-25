@@ -65,7 +65,7 @@ export type Car = {
   ability?: AbilityKind;
 };
 
-export type AbilityKind = "clone" | "ghost" | "mine" | "turret";
+export type AbilityKind = "clone" | "ghost" | "mine" | "turret" | "freeze";
 
 export type AbilityInfo = {
   kind: AbilityKind;
@@ -102,7 +102,17 @@ export const ABILITIES: Record<AbilityKind, AbilityInfo> = {
     need: 10,
     dur: 0,
     color: "#ffb02e",
-    blurb: "10 hits: drops a landmine. First enemy to touch it loses 50 HP. You are immune",
+    blurb:
+      "10 hits: drops a landmine. First enemy to touch it loses 50 HP. You are immune. Unused mines vanish after 25s",
+  },
+  freeze: {
+    kind: "freeze",
+    label: "TIME FREEZE",
+    need: 15,
+    dur: 7,
+    color: "#4dd8ff",
+    blurb:
+      "15 hits: time stops in a small zone for 7s. Enemies and bullets inside freeze, nothing can enter. You move freely",
   },
   turret: {
     kind: "turret",
@@ -139,6 +149,11 @@ export const CLONE_DAMAGE = 9;
 export const MINE_RADIUS = 30;
 export const MINE_ARM = 0.6;
 export const MINE_MAX = 5;
+/** an unused landmine disappears this many seconds after it was laid */
+export const MINE_LIFE = 25;
+/** Time Freeze: zone radius (px), seconds for things inside to slow down to a full stop */
+export const FREEZE_R = 230;
+export const FREEZE_RAMP = 1;
 /** HP a landmine takes off the first enemy that touches it (a Virtual Clone still dies) */
 export const MINE_DAMAGE = 50;
 /** chance a bot fails to notice a given enemy landmine and drives right over it */
@@ -291,9 +306,9 @@ export const v2Cars: Car[] = [
   },
   {
     name: "Blue Turret v2",
-    model: "VIRTUAL CLONE",
+    model: "TIME FREEZE",
     url: blueTurretV2,
-    hp: 160,
+    hp: 120,
     speed: 88,
     fireRate: 60,
     damage: 120,
@@ -303,7 +318,7 @@ export const v2Cars: Car[] = [
     h: 80,
     base: 1,
     price: 70000,
-    ability: "clone",
+    ability: "freeze",
   },
   {
     name: "Military Jeep v2",

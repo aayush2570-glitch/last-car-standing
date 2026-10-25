@@ -32,6 +32,9 @@ import {
   MINE_ARM,
   MINE_DAMAGE,
   MINE_MAX,
+  MINE_LIFE,
+  FREEZE_R,
+  FREEZE_RAMP,
   MINE_BLUNDER,
   TURRET_MOUNT,
   TURRET_W,
@@ -160,6 +163,10 @@ type Vehicle = {
   /* last enemy that shot this car (or one of its clones) and how long that memory lasts: clones hunt it first */
   atk?: Vehicle;
   atkT?: number;
+  /* Time Freeze: how frozen this car is (0..1), and the blue screen tint that fades in and out */
+  frz?: number;
+  tint?: number;
+  pa?: number;
   /* online match: stable id used in snapshots, the guest (pid) who drives this car, kills, finishing place */
   id?: number;
   net?: number;
@@ -190,7 +197,11 @@ type Projectile = {
   owner: Vehicle;
   life: number;
   damage: number;
+  /** Time Freeze: held in the air at the edge of a zone / inside it; sc = how fast it moved this frame (0..1) */
+  fz?: boolean;
+  sc?: number;
 };
+type Freeze = { x: number; y: number; r: number; t: number; age: number; owner: Vehicle };
 type Dot = { x: number; y: number; me: boolean; team?: number | undefined };
 type Tdm = {
   score: [number, number];
@@ -211,6 +222,8 @@ type Game = {
   cars: Vehicle[];
   bullets: Projectile[];
   mines: Mine[];
+  /** Time Freeze zones (Blue Turret v2) */
+  freezes?: Freeze[];
   started: number;
   lastHud: number;
   kills: number;
@@ -374,8 +387,11 @@ const P1_CTL: Ctl = {
 };
 const anyKey = (keys: Set<string>, list: string[]) => list.some((k) => keys.has(k));
 /** is this car's v2 power (of the given kind) running right now? */
-const powerOn = (v: Vehicle, kind: "clone" | "ghost" | "mine" | "turret") =>
+const powerOn = (v: Vehicle, kind: "clone" | "ghost" | "mine" | "turret" | "freeze") =>
   (v.abT ?? 0) > 0 && abilityOf(v.carId)?.kind === kind;
+/** Time Freeze: the caster, their clones and (TDM) their team ignore their own zone */
+const freezeImmune = (v: Vehicle, owner: Vehicle, tdm: boolean) =>
+  ownerOf(v) === owner || (tdm && v.team !== undefined && v.team === owner.team);
 /** the real car behind a vehicle: a Virtual Clone belongs to the car that made it, everything else is its own owner */
 const ownerOf = (v: Vehicle): Vehicle => v.cloneOf ?? v;
 const fmtXp = (n: number) => n.toLocaleString("en-US");
@@ -424,13 +440,20 @@ function encodeSnap(g: Game): Record<string, unknown> {
       Math.ceil(v.respawn ?? 0),
       r2(v.cooldown),
       v.k ?? 0,
+      r2(v.tint ?? 0),
+      r2(v.frz ?? 0),
     ]),
-    b: g.bullets.map((b) => [r1(b.x), r1(b.y), r1(b.vx), r1(b.vy), vid(b.owner), r2(b.life)]),
+    b: g.bullets.map((b) => {
+      const sc = b.sc ?? 1; // held / slowed bullets are sent with the speed they really have
+      return [r1(b.x), r1(b.y), r1(b.vx * sc), r1(b.vy * sc), vid(b.owner), r2(b.life)];
+    }),
     m: g.mines.map((m) => [r1(m.x), r1(m.y), vid(m.owner), r2(m.age), m.used ? 1 : 0]),
     p: g.powerups.map((q) => [r1(q.x), r1(q.y), POWER_KINDS.indexOf(q.kind), r1(q.life)]),
   };
   if (g.wrecks)
     snap["w"] = g.wrecks.map((w) => [r1(w.x), r1(w.y), r2(w.angle), w.sprite, w.hits, r2(w.flash)]);
+  if (g.freezes?.length)
+    snap["fz"] = g.freezes.map((f) => [r1(f.x), r1(f.y), r1(f.r), r2(f.t), r2(f.age)]);
   if (g.storm) snap["s"] = r2(g.storm.flash);
   if (g.blasts) snap["bl"] = g.blasts.map((b) => [r1(b.x), r1(b.y), r2(b.t)]);
   if (g.tdm) snap["td"] = [g.tdm.score[0], g.tdm.score[1], r1(g.tdm.time), g.tdm.limit];
@@ -506,6 +529,8 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
     v.respawn = nm(r, 17);
     v.cooldown = nm(r, 18);
     v.k = nm(r, 19);
+    v.tint = nm(r, 20);
+    v.frz = nm(r, 21);
     if (!fresh)
       events.push({
         v,
@@ -576,6 +601,14 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
       return w;
     });
   }
+  g.freezes = rows(m["fz"]).map((r) => ({
+    x: nm(r, 0),
+    y: nm(r, 1),
+    r: nm(r, 2),
+    t: nm(r, 3),
+    age: nm(r, 4),
+    owner: g.player,
+  }));
   if (g.storm && typeof m["s"] === "number") g.storm.flash = m["s"];
   if (Array.isArray(m["bl"]))
     g.blasts = rows(m["bl"]).map((r) => ({ x: nm(r, 0), y: nm(r, 1), t: nm(r, 2) }));
@@ -1678,6 +1711,10 @@ function ArenaGame() {
       }
       g.bullets = g.bullets.filter((b) => b.life > 0);
       for (const m of g.mines) m.age += dt;
+      for (const f of g.freezes ?? []) {
+        f.t -= dt;
+        f.age += dt;
+      }
       if (g.blasts) for (const bl of g.blasts) bl.t += dt;
       // our steering goes to the host (right away when it changes, otherwise a few times a second)
       const keys = keysRef.current,
@@ -1791,7 +1828,10 @@ function ArenaGame() {
             for (let i = 0; i < own.length - MINE_MAX; i++) (own[i] as Mine).used = true; // oldest fizzles out
             fx.impact(o.x, o.y, 0, ab.color, 30);
           } else if (ab.kind === "clone") spawnClones(o);
-          else o.abT = ab.dur;
+          else if (ab.kind === "freeze") {
+            (g.freezes ??= []).push({ x: o.x, y: o.y, r: FREEZE_R, t: ab.dur, age: 0, owner: o });
+            o.abT = ab.dur;
+          } else o.abT = ab.dur;
           if (o === p) mPower(ab.kind);
           fx.impact(o.x, o.y, 0, ab.color, 26);
           if (o === p) {
@@ -1863,6 +1903,7 @@ function ArenaGame() {
         }
         v.px = v.x;
         v.py = v.y;
+        v.pa = v.angle;
         // damaged cars trail smoke
         const hpf = v.hp / carAt(v.carId).hp;
         if (v.alive && hpf < 0.4) {
@@ -2331,10 +2372,68 @@ function ArenaGame() {
         }
       }
       g.powerups = g.powerups.filter((q) => q.life > 0);
+      /* TIME FREEZE (Blue Turret v2): inside the zone everything slows to a stop, nothing new can enter, the caster is free.
+         Cars are rolled back towards where they started this frame; bullets are slowed in the bullet loop below. */
+      if (g.freezes?.length) {
+        for (const f of g.freezes) {
+          f.t -= dt;
+          f.age += dt;
+        }
+        const before = g.freezes.length;
+        g.freezes = g.freezes.filter((f) => f.t > 0);
+        if (g.freezes.length < before) for (const b of g.bullets) b.fz = false; // time resumes: held bullets fly on
+      }
+      for (const v of g.cars) {
+        let level = 0;
+        if (v.alive && g.freezes?.length && v.px !== undefined && v.py !== undefined) {
+          for (const f of g.freezes) {
+            if (freezeImmune(v, f.owner, !!tdm)) continue;
+            const d = Math.hypot(v.x - f.x, v.y - f.y);
+            if (d > f.r) continue;
+            if (Math.hypot(v.px - f.x, v.py - f.y) > f.r + 2) {
+              v.x = v.px; // tried to drive in: the edge is a wall
+              v.y = v.py;
+              continue;
+            }
+            level = Math.max(level, Math.min(1, f.age / FREEZE_RAMP));
+          }
+          if (level > 0) {
+            v.x = v.px + (v.x - v.px) * (1 - level);
+            v.y = v.py + (v.y - v.py) * (1 - level);
+            if (v.pa !== undefined) v.angle = v.pa + wrapAng(v.angle - v.pa) * (1 - level);
+            if (level > 0.25) v.cooldown = Math.max(v.cooldown, 0.1); // frozen cars can't shoot
+          }
+        }
+        v.frz = level;
+        const tn = v.tint ?? 0;
+        v.tint = level > tn ? level : Math.max(0, tn - dt * 0.45); // blue tint creeps in with the freeze, then slowly clears
+      }
       for (const b of g.bullets) {
-        b.x += b.vx * dt;
-        b.y += b.vy * dt;
-        b.life -= dt;
+        let bdt = dt;
+        b.sc = 1;
+        if (g.freezes?.length) {
+          const bo = ownerOf(b.owner);
+          for (const f of g.freezes) {
+            if (freezeImmune(bo, f.owner, !!tdm)) continue;
+            if (b.fz) {
+              bdt = 0;
+              break;
+            }
+            const d = Math.hypot(b.x - f.x, b.y - f.y);
+            if (d <= f.r) {
+              const lv = Math.min(1, f.age / FREEZE_RAMP);
+              bdt = Math.min(bdt, dt * (1 - lv));
+              if (lv >= 1) b.fz = true;
+            } else if (Math.hypot(b.x + b.vx * dt - f.x, b.y + b.vy * dt - f.y) <= f.r) {
+              b.fz = true; // would fly in: it stops at the edge
+              bdt = 0;
+            }
+          }
+        }
+        b.sc = dt > 0 ? bdt / dt : 1;
+        b.x += b.vx * bdt;
+        b.y += b.vy * bdt;
+        b.life -= bdt;
         const dir = Math.atan2(b.vx, -b.vy);
         if (blocks.some(([x, y, w, h]) => b.x > x && b.x < x + w && b.y > y && b.y < y + h)) {
           b.life = 0;
@@ -2358,6 +2457,7 @@ function ArenaGame() {
           if (
             !v.alive ||
             ownerOf(v) === ownerOf(b.owner) ||
+            b.fz ||
             b.life <= 0 ||
             Math.hypot(b.x - v.x, b.y - v.y) >= 32
           )
@@ -2409,6 +2509,11 @@ function ArenaGame() {
       for (const m of g.mines) {
         if (m.used) continue;
         m.age += dt;
+        if (m.age >= MINE_LIFE) {
+          m.used = true; // never touched: it fizzles out
+          fx.impact(m.x, m.y, 0, "#ffb02e", 10);
+          continue;
+        }
         if (g.over || m.age < MINE_ARM) continue;
         for (const v of g.cars) {
           if (!v.alive || ownerOf(v) === m.owner || Math.hypot(v.x - m.x, v.y - m.y) > MINE_RADIUS)
@@ -2687,7 +2792,12 @@ function ArenaGame() {
         for (const m of g.mines) {
           const armed = m.age >= MINE_ARM;
           const mineCol = "#ffb02e";
-          const blink = armed ? 0.5 + 0.5 * Math.sin(t * 6 + m.x) : Math.floor(t * 14) % 2;
+          const dying = MINE_LIFE - m.age < 5; // the last 5 seconds: it flickers before it disappears
+          const blink = dying
+            ? Math.floor(t * 12) % 2
+            : armed
+              ? 0.5 + 0.5 * Math.sin(t * 6 + m.x)
+              : Math.floor(t * 14) % 2;
           // magnetic splash ring when it is first laid
           if (m.age < 0.7) {
             ctx.strokeStyle = hexA(mineCol, 1 - m.age / 0.7);
@@ -2731,6 +2841,42 @@ function ArenaGame() {
             ctx.fillStyle = "#3bff9d";
             ctx.fillText("YOURS", m.x, m.y - 28);
           }
+        }
+        /* Time Freeze zones: an icy dome that grows out of the caster, and a glow on every frozen car */
+        for (const f of g.freezes ?? []) {
+          const grow = 1 - Math.pow(1 - Math.min(1, f.age / 0.35), 3);
+          const fade = Math.min(1, f.t / 0.8);
+          const rr = f.r * grow;
+          const gr = ctx.createRadialGradient(f.x, f.y, rr * 0.2, f.x, f.y, rr);
+          gr.addColorStop(0, hexA("#4dd8ff", 0.05 * fade));
+          gr.addColorStop(1, hexA("#4dd8ff", 0.22 * fade));
+          ctx.fillStyle = gr;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, rr, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = hexA("#9fefff", 0.85 * fade);
+          ctx.lineWidth = 4;
+          ctx.setLineDash([22, 14]);
+          ctx.lineDashOffset = -t * 40;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, rr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.strokeStyle = hexA("#4dd8ff", (0.25 + 0.15 * Math.sin(t * 5)) * fade);
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(f.x, f.y, rr * 0.55, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        for (const v of g.cars) {
+          if (!v.alive || (v.frz ?? 0) < 0.05) continue;
+          ctx.globalCompositeOperation = "lighter";
+          const gl = ctx.createRadialGradient(v.x, v.y, 6, v.x, v.y, 54);
+          gl.addColorStop(0, hexA("#9fefff", 0.45 * (v.frz as number)));
+          gl.addColorStop(1, hexA("#4dd8ff", 0));
+          ctx.fillStyle = gl;
+          ctx.fillRect(v.x - 56, v.y - 56, 112, 112);
+          ctx.globalCompositeOperation = "source-over";
         }
         for (const q of g.powerups) {
           const col = POWER_COLOR[q.kind];
@@ -2987,6 +3133,11 @@ function ArenaGame() {
             .map((w) => ({ x: w.x, y: w.y, r: 110, a: 0.35 * wreckHeat(w) })),
         ];
         drawNight(ctx, width, height, ox, oy, zoom, lamps, glows, g.storm.flash);
+      }
+      /* frozen by an enemy Time Freeze: a faint blue wash that fades in with the freeze and slowly clears */
+      if (me0 && (me0.tint ?? 0) > 0.01) {
+        ctx.fillStyle = `rgba(77,216,255,${(me0.tint as number) * 0.22})`;
+        ctx.fillRect(0, 0, width, height);
       }
       // screen-space vignette for depth, plus a red heartbeat when the player is nearly dead
       const vg = ctx.createRadialGradient(
