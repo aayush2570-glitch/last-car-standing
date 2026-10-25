@@ -191,6 +191,8 @@ type Vehicle = {
   petInit?: boolean;
   petUsed?: boolean;
   petCd?: number;
+  /* pet's own body in the world: position, velocity, facing, last update time, trail timer */
+  pp?: { x: number; y: number; vx: number; vy: number; a: number; t: number; tr: number };
   shd?: number;
   /* online match: stable id used in snapshots, the guest (pid) who drives this car, kills, finishing place */
   id?: number;
@@ -2777,8 +2779,8 @@ function ArenaGame() {
           v.petCd = (v.petCd ?? 0) - dt;
           if (v.petCd <= 0) {
             const l = petLocal(pc.w, 0, 0);
-            const px = v.x + Math.cos(v.angle) * l.x - Math.sin(v.angle) * l.y,
-              py = v.y + Math.sin(v.angle) * l.x + Math.cos(v.angle) * l.y;
+            const px = v.pp ? v.pp.x : v.x + Math.cos(v.angle) * l.x - Math.sin(v.angle) * l.y,
+              py = v.pp ? v.pp.y : v.y + Math.sin(v.angle) * l.x + Math.cos(v.angle) * l.y;
             let foe: Vehicle | undefined,
               fd = PET_FLY_RANGE;
             for (const e of g.cars) {
@@ -3242,21 +3244,47 @@ function ArenaGame() {
             // floating pet: lazy bob when stopped, fast flutter when moving, travels with the car
             const pim = petImg(v.pet);
             if (pim) {
-              const mv = Math.min(1, Math.hypot(v.vx ?? 0, v.vy ?? 0) / 220);
-              const l = petLocal(car.w, t, mv, v.x * 0.01);
-              const ca = Math.cos(v.angle),
-                sa = Math.sin(v.angle);
-              const wx = ca * l.x - sa * l.y,
-                wy = sa * l.x + ca * l.y; // car frame → rotated draw frame
+              // the pet has its own body: it springs after a spot beside the car, so it trails and catches up like a real pet
+              const cw = car.w;
+              let q = v.pp;
+              if (!q) q = v.pp = { x: v.x + cw, y: v.y, vx: 0, vy: 0, a: v.angle, t, tr: 0 };
+              const pdt = Math.min(0.05, Math.max(0, t - q.t));
+              q.t = t;
+              const l = petLocal(cw, t, 0, v.x * 0.01);
+              const ox = cw * 0.85 + l.x * 0.25,
+                oy = -cw * 0.1 + l.y * 0.25;
+              const tx = v.x + Math.cos(v.angle) * ox - Math.sin(v.angle) * oy,
+                ty = v.y + Math.sin(v.angle) * ox + Math.cos(v.angle) * oy;
+              if (Math.hypot(tx - q.x, ty - q.y) > 350) {
+                q.x = tx;
+                q.y = ty;
+                q.vx = q.vy = 0;
+              }
+              q.vx += ((tx - q.x) * 40 - q.vx * 11) * pdt;
+              q.vy += ((ty - q.y) * 40 - q.vy * 11) * pdt;
+              q.x += q.vx * pdt;
+              q.y += q.vy * pdt;
+              const sp = Math.hypot(q.vx, q.vy);
+              // look where it is flying; when it hovers, look where the car looks
+              const aim = sp > 30 ? Math.atan2(q.vx, -q.vy) : v.angle;
+              q.a += wrapAng(aim - q.a) * Math.min(1, pdt * 9);
+              const pcol = petOf(v.pet)?.color ?? "#fff";
+              q.tr -= pdt;
+              if (q.tr <= 0 && !g.over) {
+                q.tr = sp > 40 ? 0.035 : 0.12;
+                fxRef.current.pet(q.x, q.y - 10, pcol);
+              }
+              const wx = q.x - v.x,
+                wy = q.y - v.y;
               ctx.save();
-              ctx.rotate(-v.angle); // shadow stays on the ground (unrotated)
+              ctx.rotate(-v.angle); // back to world axes
               ctx.fillStyle = "rgba(0,0,0,0.22)";
               ctx.beginPath();
               ctx.ellipse(wx + 4, wy + 24, PET_SIZE * 0.32, PET_SIZE * 0.12, 0, 0, Math.PI * 2);
               ctx.fill();
               const ph = (PET_SIZE * pim.naturalHeight) / pim.naturalWidth;
-              ctx.translate(wx, wy - 10);
-              ctx.rotate(v.angle + Math.PI); // pet sprites face down, so +180° makes them look the way the car faces
+              ctx.translate(wx, wy - 10 + Math.sin(t * 5 + v.x) * 2);
+              ctx.rotate(q.a + Math.PI); // sprites face down, +180° = nose along its flight direction
               ctx.scale(1, l.flap);
               ctx.drawImage(pim, -PET_SIZE / 2, -ph / 2, PET_SIZE, ph);
               ctx.restore();

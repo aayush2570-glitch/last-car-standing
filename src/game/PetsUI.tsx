@@ -69,6 +69,13 @@ export function PetsButton({ carId }: { carId: number }) {
                   alt={c.name}
                   style={{ width: c.w * 1.7, height: c.h * 1.7 }}
                 />
+                {[0.5, 0.4, 0.3, 0.2, 0.1].map((d, i) => (
+                  <i
+                    key={i}
+                    className="pet-dot"
+                    style={{ background: pet.color, animationDelay: `-${d}s`, opacity: 0.85 - i * 0.14, width: 12 - i * 1.5, height: 12 - i * 1.5 }}
+                  />
+                ))}
                 <div className="pet-fly">
                   <img src={pet.url} alt={pet.name} />
                 </div>
