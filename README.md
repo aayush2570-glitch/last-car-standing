@@ -1,3 +1,4 @@
 # Last Car Standing
-By Shadow AV
+@2026 Shadow AV
+All right reserved
  
