@@ -111,7 +111,6 @@ export function PetsButton({ carId }: { carId: number }) {
                   <div className="pet-dashes" />
                   <Lane items={TRACK_BOT} cls="bot" />
                 </div>
-                <div className="pet-ground" />
                 <div className="pet-rig">
                   <img
                     className="pet-car"
