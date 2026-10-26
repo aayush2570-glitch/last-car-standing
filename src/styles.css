@@ -832,3 +832,7 @@ html, body { overscroll-behavior: none; }
 .pet-own { top: 6px; left: 6px; z-index: 1; }
 .pet-scene { height: min(30vh, 250px); }
 @media (max-width: 520px) { .pet-card { width: 31%; } .pet-card span { display: none; } }
+
+/* preview: no shake at all, so the cat can never drift off the hood (car + cat are one fixed unit; the moving road shows the driving) */
+.pet-scene.drive .pet-rig { animation: none; }
+.pet-rig { transform: none; }
