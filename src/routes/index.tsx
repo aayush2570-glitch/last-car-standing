@@ -3284,24 +3284,31 @@ function ArenaGame() {
             // Catnya sits on the hood (nose = -y), head forward, blinking every few seconds
             const cim = petImg("catnya");
             if (cim) {
-              const cw = car.w * 0.5,
-                ch = (cw * cim.naturalHeight) / cim.naturalWidth;
+              // only the hood (front ~30% of the car): tail curl cropped off, small enough not to reach the windshield
+              const SY = 0.22,
+                ch = car.h * 0.3,
+                cw = ch / ((cim.naturalHeight * (1 - SY)) / cim.naturalWidth);
               ctx.save();
-              ctx.translate(0, -car.h * 0.2 + Math.sin(t * 2 + v.x) * 0.6);
+              ctx.translate(0, -car.h * 0.34 + Math.sin(t * 2 + v.x) * 0.5);
               ctx.rotate(Math.PI);
-              ctx.drawImage(cim, -cw / 2, -ch / 2, cw, ch);
+              ctx.drawImage(
+                cim,
+                0,
+                cim.naturalHeight * SY,
+                cim.naturalWidth,
+                cim.naturalHeight * (1 - SY),
+                -cw / 2,
+                -ch / 2,
+                cw,
+                ch,
+              );
               if (catBlink(t, v.x * 0.013)) {
+                const ey = ((0.823 - SY) / (1 - SY) - 0.5) * ch;
                 for (const ex of [-0.181, 0.18]) {
                   ctx.fillStyle = "#241e33";
                   ctx.beginPath();
-                  ctx.ellipse(ex * cw, 0.323 * ch, cw * 0.06, ch * 0.028, 0, 0, Math.PI * 2);
+                  ctx.ellipse(ex * cw, ey, cw * 0.06, ch * 0.036, 0, 0, Math.PI * 2);
                   ctx.fill();
-                  ctx.strokeStyle = "#0b0a12";
-                  ctx.lineWidth = 1;
-                  ctx.beginPath();
-                  ctx.moveTo((ex - 0.05) * cw, 0.323 * ch);
-                  ctx.lineTo((ex + 0.05) * cw, 0.323 * ch);
-                  ctx.stroke();
                 }
               }
               ctx.restore();
