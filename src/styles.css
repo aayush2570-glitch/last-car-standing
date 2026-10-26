@@ -816,3 +816,19 @@ html, body { overscroll-behavior: none; }
 .pet-card span { display: none; }
 @media (max-height: 640px) { .pet-scene { height: 26vh; } .pet-info { display: none; } }
 @media (max-width: 520px) { .pet-card { width: 31%; min-width: 0; } .pet-list { gap: 6px; } .pet-scene { width: 66vw; } }
+
+/* ---- pets as collectible cards ---- */
+.pet-list { gap: 12px; align-items: flex-end; }
+.pet-card { width: 138px; padding: 0 0 8px; gap: 5px; border-width: 4px; border-radius: 10px; overflow: visible; background: linear-gradient(#2a1668, #140a38); box-shadow: 0 5px 0 #000; }
+.pet-card::before { content: ""; align-self: stretch; height: 74px; margin: 0; border-radius: 6px 6px 0 0; background: radial-gradient(circle at 50% 55%, rgba(255,255,255,.28), rgba(255,255,255,.04) 60%, transparent 75%), #0d0626; border-bottom: 3px solid #000; }
+.pet-card img { position: absolute; top: 12px; left: 50%; translate: -50% 0; width: 56px; height: 56px; }
+.pet-card b { margin-top: 2px; font-size: 9px; letter-spacing: .05em; }
+.pet-card span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; min-height: 0; padding: 0 8px; font-size: 6px; line-height: 1.6; }
+.pet-act { width: calc(100% - 16px); padding: 7px 4px; font-size: 7px; }
+.pet-card.active { translate: 0 -8px; box-shadow: 0 8px 0 #000, 0 0 22px rgba(255,255,255,.3); }
+.pet-card:hover { translate: 0 -4px; }
+.pet-card.active:hover { translate: 0 -8px; }
+.pet-limited { top: -10px; right: -8px; z-index: 1; }
+.pet-own { top: 6px; left: 6px; z-index: 1; }
+.pet-scene { height: min(30vh, 250px); }
+@media (max-width: 520px) { .pet-card { width: 31%; } .pet-card span { display: none; } }
