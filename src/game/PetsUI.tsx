@@ -4,6 +4,24 @@ import { ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
 import { PETS, buyPet, equipPet, petOf, usePets, type PetKind } from "./pets";
 import { carAt, cars } from "./cars";
 import { useWallet } from "./xp";
+import tiresImg from "@/assets/race/tires.webp";
+import drumImg from "@/assets/race/drum.webp";
+import cratesImg from "@/assets/race/crates.webp";
+
+/* roadside race props that scroll past behind the car while it drives (two lanes, different order/speed) */
+const TRACK_TOP = [tiresImg, drumImg, cratesImg, drumImg, tiresImg];
+const TRACK_BOT = [cratesImg, tiresImg, drumImg, cratesImg, tiresImg];
+const Lane = ({ items, cls }: { items: string[]; cls: string }) => (
+  <div className={`pet-lane ${cls}`}>
+    {[0, 1].map((k) => (
+      <div className="pet-lane-set" key={k} aria-hidden="true">
+        {items.map((u, i) => (
+          <img key={i} src={u} alt="" />
+        ))}
+      </div>
+    ))}
+  </div>
+);
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
@@ -88,6 +106,11 @@ export function PetsButton({ carId }: { carId: number }) {
                 <ChevronLeft size={20} />
               </button>
               <div className={`pet-scene ${driving ? "drive" : ""}`}>
+                <div className="pet-track" aria-hidden="true">
+                  <Lane items={TRACK_TOP} cls="top" />
+                  <div className="pet-dashes" />
+                  <Lane items={TRACK_BOT} cls="bot" />
+                </div>
                 <div className="pet-ground" />
                 <img
                   className="pet-car"

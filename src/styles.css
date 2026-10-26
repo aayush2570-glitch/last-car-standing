@@ -726,7 +726,20 @@ html, body { overscroll-behavior: none; }
 .pet-fly { position: absolute; width: 64px; left: calc(50% - 32px); top: calc(50% - 32px); filter: drop-shadow(0 14px 6px rgba(0,0,0,.45)); }
 .pet-fly img { display: block; width: 100%; } /* pet faces the same way as the car */
 .pet-scene.drive .pet-car { animation: pet-rumble .18s linear infinite; }
-.pet-scene.drive .pet-scene.drive .pet-ground { animation: pet-road .6s linear infinite; }
+.pet-scene.drive .pet-ground { animation: pet-road .6s linear infinite; }
+/* scrolling roadside props: the car faces right, so props slide right-to-left; paused while the car is stopped */
+.pet-scene { overflow: hidden; border: 3px solid #000; background: linear-gradient(#241347, #1a0b3d); }
+.pet-track { position: absolute; inset: 0; }
+.pet-lane { position: absolute; left: 0; display: flex; width: max-content; align-items: flex-end; animation: pet-scroll 4s linear infinite; animation-play-state: paused; }
+.pet-lane.top { top: 4%; height: 22%; }
+.pet-lane.bot { bottom: 4%; height: 22%; animation-duration: 3.2s; }
+.pet-lane-set { display: flex; align-items: flex-end; gap: 70px; padding-right: 70px; height: 100%; }
+.pet-lane-set img { height: 100%; width: auto; object-fit: contain; filter: drop-shadow(0 6px 3px rgba(0,0,0,.5)); }
+.pet-dashes { position: absolute; left: 0; right: 0; top: 50%; height: 4px; transform: translateY(-50%); opacity: .35;
+  background: repeating-linear-gradient(90deg, #fff 0 26px, transparent 26px 62px); background-size: 62px 4px; animation: pet-dash .35s linear infinite; animation-play-state: paused; }
+.pet-scene.drive .pet-lane, .pet-scene.drive .pet-dashes { animation-play-state: running; }
+@keyframes pet-scroll { to { transform: translateX(-50%); } }
+@keyframes pet-dash { to { background-position-x: -62px; } }
 @keyframes pet-wander { 0%, 100% { transform: translate(50px,-60px); } 25% { transform: translate(105px,10px); } 50% { transform: translate(35px,65px); } 75% { transform: translate(-70px,25px); } }
 @keyframes pet-flutter { 0%, 100% { transform: translate(-6px, -2px); } 50% { transform: translate(-6px, 3px); } }
 @keyframes pet-rumble { 0%, 100% { transform: rotate(90deg) translateX(0); } 50% { transform: rotate(90deg) translateX(-2px); } }
