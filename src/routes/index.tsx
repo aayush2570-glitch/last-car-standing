@@ -3291,7 +3291,7 @@ function ArenaGame() {
                 ch = car.h * hd.ch,
                 cw = ch / ((cim.naturalHeight * (1 - SY)) / cim.naturalWidth);
               ctx.save();
-              ctx.translate(0, (hd.y - 0.5) * car.h + Math.sin(t * 2 + v.x) * 0.5);
+              ctx.translate(0, (hd.y - 0.5) * car.h);
               ctx.rotate(Math.PI);
               ctx.drawImage(
                 cim,
@@ -3304,7 +3304,7 @@ function ArenaGame() {
                 cw,
                 ch,
               );
-              if (catBlink(t, v.x * 0.013)) {
+              if (catBlink(t, (v.carId % 7) * 0.6)) {
                 const ey = ((0.823 - SY) / (1 - SY) - 0.5) * ch;
                 for (const ex of [-0.181, 0.18]) {
                   ctx.fillStyle = "#241e33";

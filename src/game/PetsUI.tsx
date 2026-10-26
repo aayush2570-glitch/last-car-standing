@@ -112,29 +112,31 @@ export function PetsButton({ carId }: { carId: number }) {
                   <Lane items={TRACK_BOT} cls="bot" />
                 </div>
                 <div className="pet-ground" />
-                <img
-                  className="pet-car"
-                  src={c.url}
-                  alt={c.name}
-                  style={{ width: c.w * 1.7, height: c.h * 1.7 }}
-                />
-                {pet.kind === "catnya" ? (
-                  <div
-                    className="pet-hood"
-                    style={{
-                      width: (c.h * 1.7 * catHood(car, c.h).ch) / 1.37,
-                      left: `calc(50% + ${c.h * 1.7 * (0.5 - catHood(car, c.h).y)}px)`,
-                    }}
-                  >
-                    <img src={pet.url} alt={pet.name} />
-                    <i className="eye l" />
-                    <i className="eye r" />
-                  </div>
-                ) : (
-                  <div className="pet-fly" ref={flyRef}>
-                    <img src={pet.url} alt={pet.name} />
-                  </div>
-                )}
+                <div className="pet-rig">
+                  <img
+                    className="pet-car"
+                    src={c.url}
+                    alt={c.name}
+                    style={{ width: c.w * 1.7, height: c.h * 1.7 }}
+                  />
+                  {pet.kind === "catnya" ? (
+                    <div
+                      className="pet-hood"
+                      style={{
+                        width: (c.h * 1.7 * catHood(car, c.h).ch) / 1.37,
+                        left: `${c.h * 1.7 * (0.5 - catHood(car, c.h).y)}px`,
+                      }}
+                    >
+                      <img src={pet.url} alt={pet.name} />
+                      <i className="eye l" />
+                      <i className="eye r" />
+                    </div>
+                  ) : (
+                    <div className="pet-fly" ref={flyRef}>
+                      <img src={pet.url} alt={pet.name} />
+                    </div>
+                  )}
+                </div>
               </div>
               <button
                 type="button"
