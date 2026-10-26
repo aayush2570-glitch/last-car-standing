@@ -56,7 +56,7 @@ const HALLOWEEN_PETS: PetInfo[] = [
     color: "#b44dff",
     limited: "LIMITED HALLOWEEN OFFER",
     blurb:
-      "Sits on your hood. When your HP is in the red zone, curses the enemy who hits you: their bullets do less damage for 30s (one time, respawn to reuse)",
+      "Sits on your hood. When your HP is in the red zone, curses the enemy who hits you: their bullets do less damage and their car is slower for 30s (one time, respawn to reuse)",
   },
 ];
 export const PETS: PetInfo[] = HALLOWEEN_OFFER ? [...BASE_PETS, ...HALLOWEEN_PETS] : BASE_PETS;
@@ -74,6 +74,7 @@ export const PET_FLY_RANGE = 620;
 export const PET_SIZE = 46;
 export const CURSE_TIME = 30; // seconds a cursed car's bullets stay weak
 export const CURSE_DAMAGE = 0.4; // cursed bullets do 40% damage
+export const CURSE_SPEED = 0.6; // cursed cars drive at 60% speed
 /** blink: eyes shut for a moment every few seconds (per-car phase) */
 export const catBlink = (t: number, phase: number) => (t + phase) % 4.3 < 0.17;
 

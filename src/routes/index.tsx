@@ -54,6 +54,7 @@ import { PetsButton } from "@/game/PetsUI";
 import {
   PET_BOT_CHANCE,
   CURSE_DAMAGE,
+  CURSE_SPEED,
   CURSE_TIME,
   catBlink,
   PET_FLY_DAMAGE,
@@ -2074,7 +2075,12 @@ function ArenaGame() {
           const target = Math.atan2(side, forward); // up = 0 (the car faces up when angle is 0)
           const delta = ((target - h.angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
           h.angle += delta * Math.min(1, dt * 4.2);
-          const pSpeed = stats.speed * 2.15 * (h.speedT > 0 ? 1.6 : 1) * push;
+          const pSpeed =
+            stats.speed *
+            2.15 *
+            (h.speedT > 0 ? 1.6 : 1) *
+            ((h.crs ?? 0) > 0 ? CURSE_SPEED : 1) *
+            push;
           h.x += Math.sin(h.angle) * pSpeed * dt;
           h.y -= Math.cos(h.angle) * pSpeed * dt;
           h.trail -= dt;
@@ -2311,7 +2317,13 @@ function ArenaGame() {
         const turn = wrapAng(heading - bot.angle);
         bot.angle += turn * Math.min(1, dt * 5);
         const bSpeed =
-          me.speed * 2.15 * BOT_SPEED * (1 + 0.08 * aid) * speedMul * (bot.speedT > 0 ? 1.6 : 1);
+          me.speed *
+          2.15 *
+          BOT_SPEED *
+          (1 + 0.08 * aid) *
+          speedMul *
+          (bot.speedT > 0 ? 1.6 : 1) *
+          ((bot.crs ?? 0) > 0 ? CURSE_SPEED : 1);
         bot.x += Math.sin(bot.angle) * bSpeed * dt;
         bot.y -= Math.cos(bot.angle) * bSpeed * dt;
         bot.trail -= dt;
