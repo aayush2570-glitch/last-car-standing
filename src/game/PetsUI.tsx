@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Gauge, PawPrint, Square, X } from "lucide-react";
 import { PETS, buyPet, catHood, equipPet, petOf, usePets, type PetKind } from "./pets";
 import { allCars, carAt } from "./cars";
 import { useWallet } from "./xp";
@@ -147,8 +147,25 @@ export function PetsButton({ carId }: { carId: number }) {
                 <ChevronRight size={20} />
               </button>
             </div>
-            <p className="pet-carname">{c.name}</p>
-            <button type="button" className="pet-drive" onClick={() => setDriving((d) => !d)}>
+            <div className="pet-info" style={{ borderColor: pet.color }}>
+              <img src={pet.url} alt="" />
+              <div>
+                <b style={{ color: pet.color }}>{pet.name}</b>
+                <small>{pet.blurb}</small>
+              </div>
+            </div>
+            <div className="pet-carbar">
+              <span className="pet-carname">{c.name}</span>
+              <span className="pet-count">
+                {car + 1} / {allCars.length}
+              </span>
+            </div>
+            <button
+              type="button"
+              className={`pet-drive ${driving ? "on" : ""}`}
+              onClick={() => setDriving((d) => !d)}
+            >
+              {driving ? <Square size={12} /> : <Gauge size={14} />}
               {driving ? "STOP CAR" : "DRIVE CAR"}
             </button>
             <div className="pet-list">
@@ -164,6 +181,11 @@ export function PetsButton({ carId }: { carId: number }) {
                   >
                     <img src={p.url} alt="" />
                     {p.limited && <em className="pet-limited">{p.limited}</em>}
+                    {owned && (
+                      <i className="pet-own">
+                        <Check size={11} /> OWNED
+                      </i>
+                    )}
                     <b style={{ color: p.color }}>{p.name}</b>
                     <span>{p.blurb}</span>
                     {owned ? (
