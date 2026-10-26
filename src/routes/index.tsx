@@ -189,6 +189,8 @@ type Vehicle = {
   /* pets: kind it spawned with, spawn done, one-time power spent, RedFly shot timer, Blutle armour seconds left */
   pet?: PetKind | undefined;
   petInit?: boolean;
+  /* bots: the pet rolled once at match start (null = rolled, no pet); kept across TDM respawns */
+  botPet?: PetKind | null;
   petUsed?: boolean;
   petCd?: number;
   /* pet's own body in the world: position, velocity, facing, last update time, trail timer */
@@ -2755,14 +2757,13 @@ function ArenaGame() {
           v.petUsed = false;
           v.petCd = 1;
           v.shd = 0;
-          v.pet =
-            v === p
-              ? (equippedPet() ?? undefined)
-              : v.net !== undefined
-                ? guestPets.get(v.net)
-                : v.bot && Math.random() < PET_BOT_CHANCE
-                  ? randomPet()
-                  : undefined;
+          if (v === p) v.pet = equippedPet() ?? undefined;
+          else if (v.net !== undefined) v.pet = guestPets.get(v.net);
+          else if (v.bot) {
+            // roll the 20% chance only once per bot: respawning in TDM keeps the same pet (or lack of one)
+            if (v.botPet === undefined) v.botPet = Math.random() < PET_BOT_CHANCE ? randomPet() : null;
+            v.pet = v.botPet ?? undefined;
+          } else v.pet = undefined;
         }
         if (!v.pet) continue;
         const pc = carAt(v.carId);
