@@ -2,10 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import redfly from "@/assets/pets/redfly.webp";
 import blutle from "@/assets/pets/blutle.webp";
 import whown from "@/assets/pets/whown.webp";
+import catnya from "@/assets/pets/catnya.webp";
 import { spendXp } from "@/game/xp";
 import { spriteReady } from "@/game/cars";
 
-export type PetKind = "redfly" | "blutle" | "whown";
+export type PetKind = "redfly" | "blutle" | "whown" | "catnya";
+
+/** LIMITED HALLOWEEN OFFER: set to false to take Catnya out of the shop and the game (owners keep it saved for when it returns) */
+export const HALLOWEEN_OFFER = true;
 export type PetInfo = {
   kind: PetKind;
   name: string;
@@ -13,9 +17,11 @@ export type PetInfo = {
   url: string;
   blurb: string;
   color: string;
+  /** shop badge for limited-time pets */
+  limited?: string;
 };
 
-export const PETS: PetInfo[] = [
+const BASE_PETS: PetInfo[] = [
   {
     kind: "redfly",
     name: "REDFLY",
@@ -41,6 +47,19 @@ export const PETS: PetInfo[] = [
     blurb: "Gives you +50 HP when your HP hits the red zone (one time)",
   },
 ];
+const HALLOWEEN_PETS: PetInfo[] = [
+  {
+    kind: "catnya",
+    name: "CATNYA",
+    price: 25000,
+    url: catnya,
+    color: "#b44dff",
+    limited: "LIMITED HALLOWEEN OFFER",
+    blurb:
+      "Sits on your hood. When your HP is in the red zone, curses the enemy who hits you: their bullets do less damage for 30s (one time, respawn to reuse)",
+  },
+];
+export const PETS: PetInfo[] = HALLOWEEN_OFFER ? [...BASE_PETS, ...HALLOWEEN_PETS] : BASE_PETS;
 export const petOf = (k?: PetKind | null) => PETS.find((p) => p.kind === k);
 
 /** a bot has this chance to spawn with a random pet */
@@ -53,6 +72,10 @@ export const PET_FLY_DAMAGE = 1.2; // RedFly bullet damage (a normal bullet does
 export const PET_FLY_RATE = 0.55; // seconds between RedFly shots
 export const PET_FLY_RANGE = 620;
 export const PET_SIZE = 46;
+export const CURSE_TIME = 30; // seconds a cursed car's bullets stay weak
+export const CURSE_DAMAGE = 0.4; // cursed bullets do 40% damage
+/** blink: eyes shut for a moment every few seconds (per-car phase) */
+export const catBlink = (t: number, phase: number) => (t + phase) % 4.3 < 0.17;
 
 export const randomPet = (): PetKind => PETS[Math.floor(Math.random() * PETS.length)]!.kind;
 
@@ -64,7 +87,11 @@ export function petLocal(carW: number, t: number, moving: number, phase = 0) {
   const a = t * 0.9 * sp + phase;
   return {
     x: Math.sin(a) * R + Math.sin(t * 2.3 + phase) * 4,
-    y: -4 + Math.cos(a * 0.8 + 1) * R * 1.25 + Math.sin(t * 2.4 + phase) * 4 * (1 - moving) + Math.sin(t * 11 + phase) * 2.5 * moving,
+    y:
+      -4 +
+      Math.cos(a * 0.8 + 1) * R * 1.25 +
+      Math.sin(t * 2.4 + phase) * 4 * (1 - moving) +
+      Math.sin(t * 11 + phase) * 2.5 * moving,
     flap: 1 + 0.07 * Math.sin(t * (6 + moving * 14)),
   };
 }

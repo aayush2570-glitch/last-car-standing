@@ -118,9 +118,20 @@ export function PetsButton({ carId }: { carId: number }) {
                   alt={c.name}
                   style={{ width: c.w * 1.7, height: c.h * 1.7 }}
                 />
-                <div className="pet-fly" ref={flyRef}>
-                  <img src={pet.url} alt={pet.name} />
-                </div>
+                {pet.kind === "catnya" ? (
+                  <div
+                    className="pet-hood"
+                    style={{ width: c.w * 1.7 * 0.5, left: `calc(50% + ${c.h * 1.7 * 0.2}px)` }}
+                  >
+                    <img src={pet.url} alt={pet.name} />
+                    <i className="eye l" />
+                    <i className="eye r" />
+                  </div>
+                ) : (
+                  <div className="pet-fly" ref={flyRef}>
+                    <img src={pet.url} alt={pet.name} />
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -147,6 +158,7 @@ export function PetsButton({ carId }: { carId: number }) {
                     style={{ borderColor: view === p.kind ? p.color : "#000" }}
                   >
                     <img src={p.url} alt="" />
+                    {p.limited && <em className="pet-limited">{p.limited}</em>}
                     <b style={{ color: p.color }}>{p.name}</b>
                     <span>{p.blurb}</span>
                     {owned ? (

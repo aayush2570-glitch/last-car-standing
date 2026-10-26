@@ -724,6 +724,12 @@ html, body { overscroll-behavior: none; }
 .pet-ground { position: absolute; inset: 12% 8%; border-radius: 50%; background: rgba(46,242,255,.1); border: 2px dashed rgba(46,242,255,.35); }
 .pet-car { position: relative; object-fit: contain; image-rendering: auto; transform: rotate(90deg); } /* car faces right */
 .pet-fly { position: absolute; width: 64px; left: calc(50% - 32px); top: calc(50% - 32px); filter: drop-shadow(0 14px 6px rgba(0,0,0,.45)); }
+.pet-hood { position: absolute; top: 50%; transform: translate(-50%,-50%) rotate(-90deg); filter: drop-shadow(0 4px 3px rgba(0,0,0,.45)); }
+.pet-hood img { display: block; width: 100%; }
+.pet-hood .eye { position: absolute; top: 82.3%; width: 12%; height: 5.6%; margin: -2.8% 0 0 -6%; border-radius: 50%; background: #241e33; opacity: 0; animation: cat-blink 4.3s infinite; }
+.pet-hood .eye.l { left: 31.9%; } .pet-hood .eye.r { left: 68%; }
+@keyframes cat-blink { 0%, 95% { opacity: 0; } 96%, 99% { opacity: 1; } 100% { opacity: 0; } }
+.pet-limited { font-style: normal; font-size: 7px; color: #1a0b2e; background: linear-gradient(90deg,#ff9a1f,#b44dff); padding: 3px 6px; letter-spacing: .5px; }
 .pet-fly img { display: block; width: 100%; } /* pet faces the same way as the car */
 .pet-scene.drive .pet-car { animation: pet-rumble .18s linear infinite; }
 .pet-scene.drive .pet-ground { animation: pet-road .6s linear infinite; }

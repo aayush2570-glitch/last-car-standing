@@ -53,6 +53,9 @@ import { addXp, buyCar, useWallet } from "@/game/xp";
 import { PetsButton } from "@/game/PetsUI";
 import {
   PET_BOT_CHANCE,
+  CURSE_DAMAGE,
+  CURSE_TIME,
+  catBlink,
   PET_FLY_DAMAGE,
   PET_FLY_RANGE,
   PET_FLY_RATE,
@@ -196,6 +199,8 @@ type Vehicle = {
   /* pet's own body in the world: position, velocity, facing, last update time, trail timer */
   pp?: { x: number; y: number; vx: number; vy: number; a: number; t: number; tr: number };
   shd?: number;
+  /* Catnya curse: seconds left on this car (its bullets do less damage) */
+  crs?: number;
   /* online match: stable id used in snapshots, the guest (pid) who drives this car, kills, finishing place */
   id?: number;
   net?: number;
@@ -495,6 +500,7 @@ function encodeSnap(g: Game, withWrecks = true, ht = 0): Record<string, unknown>
       r2(v.frz ?? 0),
       PETS.findIndex((x) => x.kind === v.pet) + 1,
       r1(v.shd ?? 0),
+      r1(v.crs ?? 0),
     ]),
     b: g.bullets.map((b) => {
       const sc = b.sc ?? 1; // held / slowed bullets are sent with the speed they really have
@@ -611,6 +617,7 @@ function applySnap(g: Game, m: Record<string, unknown>, gn: GuestNet, fx: Fx, sf
     if (pk) v.pet = pk.kind;
     else delete v.pet;
     v.shd = nm(r, 23);
+    v.crs = nm(r, 24);
     if (!fresh)
       events.push({
         v,
@@ -2599,7 +2606,24 @@ function ArenaGame() {
           if (v.cloneOf)
             v.hp = 0; // a Virtual Clone dies to a single bullet
           else
-            v.hp -= b.damage * (1 - target.armor / 250) * ((v.shd ?? 0) > 0 ? PET_SHIELD_TAKE : 1);
+            v.hp -=
+              b.damage *
+              (1 - target.armor / 250) *
+              ((v.shd ?? 0) > 0 ? PET_SHIELD_TAKE : 1) *
+              ((shooter.crs ?? 0) > 0 ? CURSE_DAMAGE : 1);
+          // Catnya: first hit taken in the red zone curses whoever shot (one time per life)
+          if (
+            !v.cloneOf &&
+            v.pet === "catnya" &&
+            !v.petUsed &&
+            v.hp > 0 &&
+            shooter !== v &&
+            v.hp / target.hp < PET_RED_ZONE
+          ) {
+            v.petUsed = true;
+            shooter.crs = CURSE_TIME;
+            fx.explode(shooter.x, shooter.y, "#b44dff");
+          }
           b.life = 0;
           v.hit = 0.14;
           fx.impact(b.x, b.y, dir, bulletCol(!!tdm, b.owner), 10);
@@ -2748,6 +2772,7 @@ function ArenaGame() {
       /* pets spawn with their car (player: the equipped pet, bots: 20% random), die with it, and never race */
       for (const v of g.cars) {
         if (!v.alive || v.cloneOf) {
+          v.crs = 0;
           v.pet = undefined;
           v.petInit = false;
           continue;
@@ -2761,7 +2786,8 @@ function ArenaGame() {
           else if (v.net !== undefined) v.pet = guestPets.get(v.net);
           else if (v.bot) {
             // roll the 20% chance only once per bot: respawning in TDM keeps the same pet (or lack of one)
-            if (v.botPet === undefined) v.botPet = Math.random() < PET_BOT_CHANCE ? randomPet() : null;
+            if (v.botPet === undefined)
+              v.botPet = Math.random() < PET_BOT_CHANCE ? randomPet() : null;
             v.pet = v.botPet ?? undefined;
           } else v.pet = undefined;
         }
@@ -2813,6 +2839,7 @@ function ArenaGame() {
         v.blk = Math.max(0, (v.blk ?? 0) - dt);
         if (v.abT) v.abT = Math.max(0, v.abT - dt);
         if (v.atkT) v.atkT = Math.max(0, v.atkT - dt);
+        if (v.crs) v.crs = Math.max(0, v.crs - dt);
         v.speedT = Math.max(0, v.speedT - dt);
         v.dblT = Math.max(0, v.dblT - dt);
         if (v.alive && v.hp < carAt(v.carId).hp * 0.4 && Math.random() < dt * 9) fx.puff(v.x, v.y);
@@ -3241,7 +3268,33 @@ function ArenaGame() {
             ctx.fill();
             ctx.stroke();
           }
-          if (v.pet) {
+          if (v.pet === "catnya") {
+            // Catnya sits on the hood (nose = -y), head forward, blinking every few seconds
+            const cim = petImg("catnya");
+            if (cim) {
+              const cw = car.w * 0.5,
+                ch = (cw * cim.naturalHeight) / cim.naturalWidth;
+              ctx.save();
+              ctx.translate(0, -car.h * 0.2 + Math.sin(t * 2 + v.x) * 0.6);
+              ctx.rotate(Math.PI);
+              ctx.drawImage(cim, -cw / 2, -ch / 2, cw, ch);
+              if (catBlink(t, v.x * 0.013)) {
+                for (const ex of [-0.181, 0.18]) {
+                  ctx.fillStyle = "#241e33";
+                  ctx.beginPath();
+                  ctx.ellipse(ex * cw, 0.323 * ch, cw * 0.06, ch * 0.028, 0, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.strokeStyle = "#0b0a12";
+                  ctx.lineWidth = 1;
+                  ctx.beginPath();
+                  ctx.moveTo((ex - 0.05) * cw, 0.323 * ch);
+                  ctx.lineTo((ex + 0.05) * cw, 0.323 * ch);
+                  ctx.stroke();
+                }
+              }
+              ctx.restore();
+            }
+          } else if (v.pet) {
             // floating pet: lazy bob when stopped, fast flutter when moving, travels with the car
             const pim = petImg(v.pet);
             if (pim) {
@@ -3285,6 +3338,26 @@ function ArenaGame() {
               ctx.drawImage(pim, -PET_SIZE / 2, -ph / 2, PET_SIZE, ph);
               ctx.restore();
             }
+          }
+          if ((v.crs ?? 0) > 0) {
+            // cursed: purple sparkles drift up around the car
+            ctx.save();
+            ctx.rotate(-v.angle);
+            for (let i = 0; i < 9; i++) {
+              const k = (t * 0.7 + i / 9) % 1,
+                a = i * 2.4 + t * 1.5;
+              ctx.fillStyle = hexA(i % 2 ? "#b44dff" : "#e0a8ff", 0.85 * (1 - k));
+              ctx.beginPath();
+              ctx.arc(
+                Math.cos(a) * r * 0.9,
+                Math.sin(a) * r * 0.9 - k * 34,
+                3.2 * (1 - k * 0.6),
+                0,
+                Math.PI * 2,
+              );
+              ctx.fill();
+            }
+            ctx.restore();
           }
           if (v.cloneOf && v.cloneOf === me0) {
             // only the clones' own driver sees this faint ring (to tell them apart from enemy lookalikes)
