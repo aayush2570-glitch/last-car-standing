@@ -57,6 +57,7 @@ import {
   CURSE_SPEED,
   CURSE_TIME,
   catBlink,
+  catHood,
   PET_FLY_DAMAGE,
   PET_FLY_RANGE,
   PET_FLY_RATE,
@@ -3286,10 +3287,11 @@ function ArenaGame() {
             if (cim) {
               // only the hood (front ~30% of the car): tail curl cropped off, small enough not to reach the windshield
               const SY = 0.22,
-                ch = car.h * 0.3,
+                hd = catHood(v.carId, car.h),
+                ch = car.h * hd.ch,
                 cw = ch / ((cim.naturalHeight * (1 - SY)) / cim.naturalWidth);
               ctx.save();
-              ctx.translate(0, -car.h * 0.34 + Math.sin(t * 2 + v.x) * 0.5);
+              ctx.translate(0, (hd.y - 0.5) * car.h + Math.sin(t * 2 + v.x) * 0.5);
               ctx.rotate(Math.PI);
               ctx.drawImage(
                 cim,

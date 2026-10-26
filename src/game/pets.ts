@@ -4,7 +4,7 @@ import blutle from "@/assets/pets/blutle.webp";
 import whown from "@/assets/pets/whown.webp";
 import catnya from "@/assets/pets/catnya.webp";
 import { spendXp } from "@/game/xp";
-import { spriteReady } from "@/game/cars";
+import { spriteReady, isV2 } from "@/game/cars";
 
 export type PetKind = "redfly" | "blutle" | "whown" | "catnya";
 
@@ -166,3 +166,7 @@ export function usePets() {
   const has = useCallback((k: PetKind) => s.owned.includes(k), [s.owned]);
   return { ...s, has };
 }
+
+/** Catnya's seat on the hood: centre (fraction of car height from the nose) and height. The pointed v2 noses are narrower, so she sits a bit further back and smaller there */
+export const catHood = (carId: number, h: number) =>
+  isV2(carId) && h === 80 ? { y: 0.25, ch: 0.27 } : { y: 0.16, ch: 0.3 };

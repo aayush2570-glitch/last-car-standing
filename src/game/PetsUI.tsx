@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
-import { PETS, buyPet, equipPet, petOf, usePets, type PetKind } from "./pets";
-import { carAt, cars } from "./cars";
+import { PETS, buyPet, catHood, equipPet, petOf, usePets, type PetKind } from "./pets";
+import { allCars, carAt } from "./cars";
 import { useWallet } from "./xp";
 import tiresImg from "@/assets/race/tires.webp";
 import drumImg from "@/assets/race/drum.webp";
@@ -73,7 +73,7 @@ export function PetsButton({ carId }: { carId: number }) {
   }, [open, driving]);
   const c = carAt(car);
   const pet = petOf(view)!;
-  const step = (d: number) => setCar((i) => (i + d + cars.length) % cars.length);
+  const step = (d: number) => setCar((i) => (i + d + allCars.length) % allCars.length);
   return (
     <>
       <button type="button" className="pet-btn" onClick={() => setOpen(true)}>
@@ -121,7 +121,10 @@ export function PetsButton({ carId }: { carId: number }) {
                 {pet.kind === "catnya" ? (
                   <div
                     className="pet-hood"
-                    style={{ width: c.w * 1.7 * 0.5, left: `calc(50% + ${c.h * 1.7 * 0.2}px)` }}
+                    style={{
+                      width: (c.h * 1.7 * catHood(car, c.h).ch) / 1.37,
+                      left: `calc(50% + ${c.h * 1.7 * (0.5 - catHood(car, c.h).y)}px)`,
+                    }}
                   >
                     <img src={pet.url} alt={pet.name} />
                     <i className="eye l" />
