@@ -800,3 +800,19 @@ html, body { overscroll-behavior: none; }
   .pet-card { width: 46%; }
   .pet-arrow { width: 32px; height: 32px; }
 }
+
+/* ---- pets preview fix: car visible again (Tailwind img max-width:100% squashed it inside the 0-size rig) + fits one screen like the home screen ---- */
+.pet-car { max-width: none; max-height: none; }
+.pet-screen { overflow: hidden; gap: 6px; padding: 10px 14px; justify-content: flex-start; }
+.pet-head { padding-bottom: 6px; }
+.pet-scene { width: min(62vw, 560px); height: min(32vh, 260px); }
+.pet-info { padding: 6px 12px; }
+.pet-info img { width: 32px; height: 32px; }
+.pet-info b { margin-bottom: 4px; }
+.pet-drive { padding: 8px 16px; }
+.pet-list { flex-wrap: nowrap; margin-top: 4px; gap: 10px; }
+.pet-card { width: 150px; gap: 5px; padding: 10px 8px 8px; }
+.pet-card img { width: 46px; height: 46px; }
+.pet-card span { display: none; }
+@media (max-height: 640px) { .pet-scene { height: 26vh; } .pet-info { display: none; } }
+@media (max-width: 520px) { .pet-card { width: 31%; min-width: 0; } .pet-list { gap: 6px; } .pet-scene { width: 66vw; } }
