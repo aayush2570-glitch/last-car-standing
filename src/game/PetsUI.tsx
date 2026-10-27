@@ -18,7 +18,7 @@ import {
 import { allCars, carAt } from "./cars";
 import { useWallet } from "./xp";
 /** Catnya in the preview is drawn this many times bigger than one sheet cell */
-const CAT_PREVIEW = 0.9;
+const CAT_PREVIEW = 0.45;
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 

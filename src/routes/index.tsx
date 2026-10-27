@@ -3324,8 +3324,8 @@ function ArenaGame() {
                 q.ph = ((q.ph ?? 0) + pdt * Math.min(12, 3 + sp * 0.07)) % CAT_COLS;
               } else q.ph = 0; // standing: first frame of the way she faces
               const fr = Math.floor(q.ph ?? 0) % CAT_COLS;
-              // sprite scale: her body is about half a car long
-              const sc = (car.h * 0.62) / CAT_CELL_H;
+              // sprite scale: her body is about 30% of the car length
+              const sc = (car.h * 0.3) / CAT_CELL_H;
               const dw = CAT_CELL_W * sc,
                 dh = CAT_CELL_H * sc;
               const wx = q.x - v.x,
