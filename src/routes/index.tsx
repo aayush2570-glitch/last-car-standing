@@ -3317,6 +3317,26 @@ function ArenaGame() {
               q.vy += ((ty - q.y) * 26 - q.vy * 10) * pdt;
               q.x += q.vx * pdt;
               q.y += q.vy * pdt;
+              // she can't walk through cars: push her out of every car's body (her own too)
+              for (const e of g.cars) {
+                if (!e.alive) continue;
+                const ec = carAt(e.carId);
+                const rr = (e === v ? ec.w * 0.55 : ec.h * 0.5) + 8;
+                const dx = q.x - e.x,
+                  dy = q.y - e.y,
+                  dd = Math.hypot(dx, dy);
+                if (dd < rr) {
+                  const nx = dd > 0.01 ? dx / dd : 1,
+                    ny = dd > 0.01 ? dy / dd : 0;
+                  q.x = e.x + nx * rr;
+                  q.y = e.y + ny * rr;
+                  const vn = q.vx * nx + q.vy * ny;
+                  if (vn < 0) {
+                    q.vx -= vn * nx;
+                    q.vy -= vn * ny;
+                  }
+                }
+              }
               const sp = Math.hypot(q.vx, q.vy);
               const walking = sp > 14;
               if (walking) {

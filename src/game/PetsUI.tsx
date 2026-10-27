@@ -52,7 +52,14 @@ export function PetsButton({ carId }: { carId: number }) {
       ang = 0,
       dir = CAT_DOWN,
       ph = 0;
-    const pos = (u: number): [number, number] => [Math.cos(u) * 95, Math.sin(u * 1.3) * 62];
+    const cc = carAt(car);
+    // Catnya walks a true circle around the car (outside its body); flying pets keep the looping path
+    const rx = (cc.h * 1.7) / 2 + 28,
+      ry = (cc.w * 1.7) / 2 + (CAT_CELL_H * CAT_PREVIEW) / 2 - 6;
+    const pos = (u: number): [number, number] =>
+      view === "catnya"
+        ? [Math.cos(u) * rx, Math.sin(u) * ry]
+        : [Math.cos(u) * 95, Math.sin(u * 1.3) * 62];
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
@@ -81,7 +88,7 @@ export function PetsButton({ carId }: { carId: number }) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [open, view]);
+  }, [open, view, car]);
   const c = carAt(car);
   const pet = petOf(view)!;
   const step = (d: number) => setCar((i) => (i + d + allCars.length) % allCars.length);
