@@ -10,6 +10,7 @@ import {
   CAT_SHEET,
   PETS,
   buyPet,
+  petCost,
   catBlink,
   catFacing,
   equipPet,
@@ -32,7 +33,7 @@ export function PetsButton({ carId }: { carId: number }) {
   const flyRef = useRef<HTMLDivElement>(null);
   const catRef = useRef<HTMLDivElement>(null);
   const { xp } = useWallet();
-  const { sel, has } = usePets();
+  const { sel, has, pending } = usePets();
   useEffect(() => {
     if (!open) return;
     setCar(carId);
@@ -210,13 +211,15 @@ export function PetsButton({ carId }: { carId: number }) {
                       <button
                         type="button"
                         className="pet-act buy"
-                        disabled={xp < p.price}
+                        disabled={xp < petCost(p.kind)}
                         onClick={(e) => {
                           e.stopPropagation();
                           buyPet(p.kind);
                         }}
                       >
-                        BUY · {fmt(p.price)} XP
+                        {pending.includes(p.kind)
+                          ? `PAY ${fmt(petCost(p.kind))} XP MORE`
+                          : `BUY · ${fmt(p.price)} XP`}
                       </button>
                     )}
                   </div>

@@ -20,6 +20,8 @@ export type PetInfo = {
   color: string;
   /** shop badge for limited-time pets */
   limited?: string;
+  /** price this pet used to cost: anyone who bought it at that price pays the difference to keep it */
+  legacyPrice?: number;
 };
 
 const BASE_PETS: PetInfo[] = [
@@ -52,7 +54,8 @@ const HALLOWEEN_PETS: PetInfo[] = [
   {
     kind: "catnya",
     name: "CATNYA",
-    price: 25000,
+    price: 40000,
+    legacyPrice: 25000,
     url: catnya,
     color: "#b44dff",
     limited: "LIMITED HALLOWEEN OFFER",
@@ -117,13 +120,27 @@ export function petImg(k: PetKind): HTMLImageElement | undefined {
 const OWN = "lcs.pets",
   SEL = "lcs.pet",
   EVT = "lcs-pets";
-function readOwned(): PetKind[] {
+const PAID = "lcs.pets.paid"; // pets with a legacyPrice that are paid in full at the current price
+function readJson(key: string): string[] {
   try {
-    const a = JSON.parse(localStorage.getItem(OWN) ?? "[]");
-    return Array.isArray(a) ? a.filter((k) => PETS.some((p) => p.kind === k)) : [];
+    const a = JSON.parse(localStorage.getItem(key) ?? "[]");
+    return Array.isArray(a) ? a : [];
   } catch {
     return [];
   }
+}
+/** bought at the old price but not topped up yet: shown in the shop as "pay X more", can't be equipped */
+function readPending(): PetKind[] {
+  const paid = readJson(PAID);
+  return readJson(OWN).filter((k) =>
+    PETS.some((p) => p.kind === k && p.legacyPrice && !paid.includes(k)),
+  ) as PetKind[];
+}
+function readOwned(): PetKind[] {
+  const pending = readPending();
+  return readJson(OWN).filter(
+    (k) => PETS.some((p) => p.kind === k) && !pending.includes(k as PetKind),
+  ) as PetKind[];
 }
 function readSel(): PetKind | null {
   try {
@@ -135,7 +152,9 @@ function readSel(): PetKind | null {
 }
 function write(owned: PetKind[], sel: PetKind | null) {
   try {
-    localStorage.setItem(OWN, JSON.stringify(owned));
+    // keep pets still waiting for their top-up in the saved list
+    const all = [...new Set([...owned, ...readPending()])];
+    localStorage.setItem(OWN, JSON.stringify(all));
     if (sel) localStorage.setItem(SEL, sel);
     else localStorage.removeItem(SEL);
     window.dispatchEvent(new Event(EVT));
@@ -144,10 +163,21 @@ function write(owned: PetKind[], sel: PetKind | null) {
   }
 }
 export const equippedPet = (): PetKind | null => readSel();
+/** XP it costs this player right now (the difference only, if they own the old-price version) */
+export const petCost = (k: PetKind): number => {
+  const info = petOf(k);
+  if (!info) return 0;
+  return readPending().includes(k) ? info.price - (info.legacyPrice ?? 0) : info.price;
+};
 export function buyPet(k: PetKind): boolean {
   const owned = readOwned();
   const info = petOf(k);
-  if (!info || owned.includes(k) || !spendXp(info.price)) return false;
+  if (!info || owned.includes(k) || !spendXp(petCost(k))) return false;
+  try {
+    if (info.legacyPrice) localStorage.setItem(PAID, JSON.stringify([...readJson(PAID), k]));
+  } catch {
+    /* storage unavailable */
+  }
   write([...owned, k], k); // a new pet is equipped right away
   return true;
 }
@@ -156,9 +186,13 @@ export function equipPet(k: PetKind | null) {
   if (k === null || owned.includes(k)) write(owned, k);
 }
 export function usePets() {
-  const [s, setS] = useState<{ owned: PetKind[]; sel: PetKind | null }>({ owned: [], sel: null });
+  const [s, setS] = useState<{ owned: PetKind[]; sel: PetKind | null; pending: PetKind[] }>({
+    owned: [],
+    sel: null,
+    pending: [],
+  });
   useEffect(() => {
-    const sync = () => setS({ owned: readOwned(), sel: readSel() });
+    const sync = () => setS({ owned: readOwned(), sel: readSel(), pending: readPending() });
     sync();
     window.addEventListener(EVT, sync);
     window.addEventListener("lcs-wallet", sync);
