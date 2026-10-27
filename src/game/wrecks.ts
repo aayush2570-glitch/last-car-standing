@@ -92,6 +92,12 @@ const segPoint = (x1: number, y1: number, x2: number, y2: number, px: number, py
   return [x1 + dx * t, y1 + dy * t] as const;
 };
 
+/** closest point on a wreck's body axis to (px, py); the wreck's solid edge is `w.r` away from it (used by pets that must not walk through wrecks) */
+export function wreckAxisPoint(w: Wreck, px: number, py: number): readonly [number, number] {
+  const [x1, y1, x2, y2] = ends(w);
+  return segPoint(x1, y1, x2, y2, px, py);
+}
+
 /** true when a point (a bullet) is inside the wreck's body */
 export function wreckContains(w: Wreck, px: number, py: number, pad = 0): boolean {
   const [x1, y1, x2, y2] = ends(w);

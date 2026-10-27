@@ -112,6 +112,7 @@ import {
   garageLayout,
   makeWreck,
   stepWrecks,
+  wreckAxisPoint,
   wreckContains,
   wreckHeat,
   type Wreck,
@@ -3339,6 +3340,53 @@ function ArenaGame() {
                   }
                 }
               }
+              // ...nor through the map: yard containers / crates, Wreck Garage wrecks and the world edge
+              const catR = ((CAT_CELL_W * (car.h * 0.3)) / CAT_CELL_H) * 0.32;
+              const pushOut = (nx: number, ny: number, depth: number) => {
+                q.x += nx * depth;
+                q.y += ny * depth;
+                const vn = q.vx * nx + q.vy * ny;
+                if (vn < 0) {
+                  q.vx -= vn * nx;
+                  q.vy -= vn * ny;
+                }
+              };
+              for (const [bx, by, bw, bh] of blocks) {
+                const cx = Math.max(bx, Math.min(bx + bw, q.x)),
+                  cy = Math.max(by, Math.min(by + bh, q.y));
+                const dx = q.x - cx,
+                  dy = q.y - cy,
+                  dd = Math.hypot(dx, dy);
+                if (dd >= catR) continue;
+                if (dd > 0.01) pushOut(dx / dd, dy / dd, catR - dd);
+                else {
+                  // centre is inside the block: leave through the nearest edge
+                  const l = q.x - bx,
+                    r = bx + bw - q.x,
+                    tp = q.y - by,
+                    bt = by + bh - q.y,
+                    m = Math.min(l, r, tp, bt);
+                  if (m === l) pushOut(-1, 0, l + catR);
+                  else if (m === r) pushOut(1, 0, r + catR);
+                  else if (m === tp) pushOut(0, -1, tp + catR);
+                  else pushOut(0, 1, bt + catR);
+                }
+              }
+              for (const w of g.wrecks ?? []) {
+                if (w.hits < 0) continue;
+                if (Math.abs(w.x - q.x) > w.len / 2 + 40 || Math.abs(w.y - q.y) > w.len / 2 + 40)
+                  continue;
+                const [ax, ay] = wreckAxisPoint(w, q.x, q.y);
+                const dx = q.x - ax,
+                  dy = q.y - ay,
+                  dd = Math.hypot(dx, dy),
+                  min = w.r + catR;
+                if (dd >= min) continue;
+                if (dd > 0.01) pushOut(dx / dd, dy / dd, min - dd);
+                else pushOut(1, 0, min);
+              }
+              q.x = Math.max(catR, Math.min(WORLD.width - catR, q.x));
+              q.y = Math.max(catR, Math.min(WORLD.height - catR, q.y));
               const sp = Math.hypot(q.vx, q.vy);
               const walking = sp > 14;
               if (walking) {
