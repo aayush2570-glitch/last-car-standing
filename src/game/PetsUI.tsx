@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
 import {
+  CAT_BLINK_ROWS,
   CAT_CELL_H,
   CAT_CELL_W,
   CAT_COLS,
@@ -9,6 +10,7 @@ import {
   CAT_SHEET,
   PETS,
   buyPet,
+  catBlink,
   catFacing,
   equipPet,
   petOf,
@@ -74,7 +76,7 @@ export function PetsButton({ carId }: { carId: number }) {
           const dw = CAT_CELL_W * CAT_PREVIEW,
             dh = CAT_CELL_H * CAT_PREVIEW;
           el.style.transform = `translate(${x - dw / 2}px,${y - dh / 2}px)`;
-          el.style.backgroundPosition = `${-Math.floor(ph) * dw}px ${-dir * dh}px`;
+          el.style.backgroundPosition = `${-Math.floor(ph) * dw}px ${-(dir + (catBlink(t, 0) ? CAT_BLINK_ROWS : 0)) * dh}px`;
         }
       } else {
         const aim = Math.atan2(y2 - y, x2 - x);
@@ -141,7 +143,7 @@ export function PetsButton({ carId }: { carId: number }) {
                         width: CAT_CELL_W * CAT_PREVIEW,
                         height: CAT_CELL_H * CAT_PREVIEW,
                         backgroundImage: `url(${CAT_SHEET})`,
-                        backgroundSize: `${CAT_COLS * CAT_CELL_W * CAT_PREVIEW}px ${4 * CAT_CELL_H * CAT_PREVIEW}px`,
+                        backgroundSize: `${CAT_COLS * CAT_CELL_W * CAT_PREVIEW}px ${2 * CAT_BLINK_ROWS * CAT_CELL_H * CAT_PREVIEW}px`,
                       }}
                     />
                   ) : (

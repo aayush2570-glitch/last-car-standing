@@ -56,10 +56,12 @@ import {
   CURSE_DAMAGE,
   CURSE_SPEED,
   CURSE_TIME,
+  CAT_BLINK_ROWS,
   CAT_CELL_H,
   CAT_CELL_W,
   CAT_COLS,
   CAT_DOWN,
+  catBlink,
   catFacing,
   catSheetImg,
   PET_FLY_DAMAGE,
@@ -3359,7 +3361,8 @@ function ArenaGame() {
               ctx.drawImage(
                 sheet,
                 fr * CAT_CELL_W,
-                (q.d ?? CAT_DOWN) * CAT_CELL_H,
+                ((q.d ?? CAT_DOWN) + (catBlink(t, (v.carId % 7) * 0.6) ? CAT_BLINK_ROWS : 0)) *
+                  CAT_CELL_H,
                 CAT_CELL_W,
                 CAT_CELL_H,
                 wx - dw / 2,

@@ -171,6 +171,10 @@ export const CAT_SHEET = catWalk;
 export const CAT_COLS = 6;
 export const CAT_CELL_W = 116;
 export const CAT_CELL_H = 129;
+/** the sheet holds the open-eyed rows first, then the same 4 rows again with eyes shut (blink) */
+export const CAT_BLINK_ROWS = 4;
+/** blink: eyes shut for a moment every few seconds (per-car phase) */
+export const catBlink = (t: number, phase: number) => (t + phase) % 4.3 < 0.18;
 /** sheet row for each way she can face */
 export const CAT_DOWN = 0,
   CAT_UP = 1,
