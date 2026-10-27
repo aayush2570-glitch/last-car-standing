@@ -724,33 +724,12 @@ html, body { overscroll-behavior: none; }
 .pet-rig { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
 .pet-car { position: absolute; left: 0; top: 0; object-fit: contain; image-rendering: auto; transform: translate(-50%,-50%) rotate(90deg); } /* car faces right */
 .pet-fly { position: absolute; width: 64px; left: calc(50% - 32px); top: calc(50% - 32px); filter: drop-shadow(0 14px 6px rgba(0,0,0,.45)); }
-.pet-hood { position: absolute; top: 50%; transform: translate(-50%,-50%) rotate(-90deg); filter: drop-shadow(0 4px 3px rgba(0,0,0,.45)); }
-.pet-hood { aspect-ratio: 457 / 609; overflow: hidden; }
-.pet-hood img { position: absolute; top: -28.2%; left: 0; width: 100%; }
-.pet-hood .eye { position: absolute; top: 77.3%; width: 12%; height: 6.5%; margin: -3.2% 0 0 -6%; border-radius: 50%; background: #241e33; opacity: 0; animation: cat-blink 4.3s infinite; }
-.pet-hood .eye.l { left: 31.9%; } .pet-hood .eye.r { left: 68%; }
-@keyframes cat-blink { 0%, 95% { opacity: 0; } 96%, 99% { opacity: 1; } 100% { opacity: 0; } }
 .pet-limited { font-style: normal; font-size: 7px; color: #1a0b2e; background: linear-gradient(90deg,#ff9a1f,#b44dff); padding: 3px 6px; letter-spacing: .5px; }
 .pet-fly img { display: block; width: 100%; } /* pet faces the same way as the car */
-.pet-scene.drive .pet-rig { animation: pet-rumble .18s linear infinite; }
-.pet-scene.drive /* scrolling roadside props: the car faces right, so props slide right-to-left; paused while the car is stopped */
 .pet-scene { overflow: hidden; border: 3px solid #000; background: linear-gradient(#241347, #1a0b3d); }
-.pet-track { position: absolute; inset: 0; }
-.pet-lane { position: absolute; left: 0; display: flex; width: max-content; align-items: flex-end; animation: pet-scroll 4s linear infinite; animation-play-state: paused; }
-.pet-lane.top { top: 4%; height: 22%; }
-.pet-lane.bot { bottom: 4%; height: 22%; animation-duration: 3.2s; }
-.pet-lane-set { display: flex; align-items: flex-end; gap: 70px; padding-right: 70px; height: 100%; }
-.pet-lane-set img { height: 100%; width: auto; object-fit: contain; filter: drop-shadow(0 6px 3px rgba(0,0,0,.5)); }
-.pet-dashes { position: absolute; left: 0; right: 0; top: 50%; height: 4px; transform: translateY(-50%); opacity: .35;
-  background: repeating-linear-gradient(90deg, #fff 0 26px, transparent 26px 62px); background-size: 62px 4px; animation: pet-dash .35s linear infinite; animation-play-state: paused; }
-.pet-scene.drive .pet-lane, .pet-scene.drive .pet-dashes { animation-play-state: running; }
-@keyframes pet-scroll { to { transform: translateX(-50%); } }
-@keyframes pet-dash { to { background-position-x: -62px; } }
 @keyframes pet-wander { 0%, 100% { transform: translate(50px,-60px); } 25% { transform: translate(105px,10px); } 50% { transform: translate(35px,65px); } 75% { transform: translate(-70px,25px); } }
 @keyframes pet-flutter { 0%, 100% { transform: translate(-6px, -2px); } 50% { transform: translate(-6px, 3px); } }
-@keyframes pet-rumble { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-2px); } }
 .pet-carname { font-size: 10px; color: #cfc6ff; }
-.pet-drive { padding: 9px 14px; font: 9px/1 "Press Start 2P", monospace; color: #1a0b3d; background: #ffe23d; border: 3px solid #000; box-shadow: 0 4px 0 #000; cursor: pointer; }
 .pet-list { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
 .pet-card { width: 210px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px; text-align: center; background: rgba(20,10,50,.85); border: 3px solid #000; cursor: pointer; }
 .pet-card img { width: 64px; height: 64px; object-fit: contain; }
@@ -773,9 +752,7 @@ html, body { overscroll-behavior: none; }
 .pet-arrow:hover { background: #5a43b0; }
 .pet-arrow:active { translate: 0 3px; box-shadow: 0 1px 0 #000; }
 .pet-scene { width: min(78vw, 640px); height: min(40vh, 320px); border: 4px solid #000; box-shadow: 0 6px 0 #000, 0 0 0 3px #3b2a7a, 0 14px 40px rgba(0,0,0,.55); background: linear-gradient(#2d1a66, #1a0b3d); }
-.pet-track::before { content: ""; position: absolute; left: 0; right: 0; top: 29%; bottom: 29%; background: linear-gradient(#2a2a3a, #1c1c2a); border-top: 4px solid #ffe23d; border-bottom: 4px solid #ffe23d; box-shadow: 0 0 0 3px #000, inset 0 10px 18px rgba(0,0,0,.45), inset 0 -10px 18px rgba(0,0,0,.45); }
 .pet-scene::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.45) 100%); }
-.pet-dashes { opacity: .55; }
 .pet-info { display: flex; align-items: center; gap: 12px; width: min(86vw, 560px); padding: 10px 14px; background: rgba(11,6,32,.9); border: 3px solid #ff4d9a; box-shadow: 0 4px 0 #000; }
 .pet-info img { flex: none; width: 44px; height: 44px; object-fit: contain; filter: drop-shadow(0 3px 2px rgba(0,0,0,.6)); }
 .pet-info b { display: block; margin-bottom: 7px; font-size: 11px; }
@@ -783,10 +760,6 @@ html, body { overscroll-behavior: none; }
 .pet-carbar { display: flex; align-items: center; justify-content: center; gap: 12px; }
 .pet-carname { padding: 6px 12px; font-size: 10px; color: #fff; background: #3b2a7a; border: 3px solid #000; }
 .pet-count { font-size: 8px; color: #a99ee0; }
-.pet-drive { display: flex; align-items: center; gap: 8px; padding: 11px 18px; transition: translate .08s; }
-.pet-drive:hover { background: #fff07a; }
-.pet-drive:active { translate: 0 3px; box-shadow: 0 1px 0 #000; }
-.pet-drive.on { color: #fff; background: #ff3b3b; }
 .pet-list { gap: 14px; margin-top: 10px; max-width: 760px; }
 .pet-card { position: relative; width: 168px; padding: 14px 10px 12px; background: linear-gradient(#1f1050, #120833); box-shadow: 0 5px 0 #000; transition: translate .12s, box-shadow .12s; }
 .pet-card:hover { translate: 0 -3px; box-shadow: 0 8px 0 #000; }
@@ -809,7 +782,6 @@ html, body { overscroll-behavior: none; }
 .pet-info { padding: 6px 12px; }
 .pet-info img { width: 32px; height: 32px; }
 .pet-info b { margin-bottom: 4px; }
-.pet-drive { padding: 8px 16px; }
 .pet-list { flex-wrap: nowrap; margin-top: 4px; gap: 10px; }
 .pet-card { width: 150px; gap: 5px; padding: 10px 8px 8px; }
 .pet-card img { width: 46px; height: 46px; }
@@ -834,5 +806,7 @@ html, body { overscroll-behavior: none; }
 @media (max-width: 520px) { .pet-card { width: 31%; } .pet-card span { display: none; } }
 
 /* preview: no shake at all, so the cat can never drift off the hood (car + cat are one fixed unit; the moving road shows the driving) */
-.pet-scene.drive .pet-rig { animation: none; }
 .pet-rig { transform: none; }
+
+/* Catnya in the pets preview: one cell of her walk-cycle sheet, moved by the preview loop */
+.pet-cat { position: absolute; left: 0; top: 0; background-repeat: no-repeat; filter: drop-shadow(0 8px 4px rgba(0,0,0,.45)); pointer-events: none; }

@@ -56,8 +56,12 @@ import {
   CURSE_DAMAGE,
   CURSE_SPEED,
   CURSE_TIME,
-  catBlink,
-  catHood,
+  CAT_CELL_H,
+  CAT_CELL_W,
+  CAT_COLS,
+  CAT_DOWN,
+  catFacing,
+  catSheetImg,
   PET_FLY_DAMAGE,
   PET_FLY_RANGE,
   PET_FLY_RATE,
@@ -199,7 +203,18 @@ type Vehicle = {
   petUsed?: boolean;
   petCd?: number;
   /* pet's own body in the world: position, velocity, facing, last update time, trail timer */
-  pp?: { x: number; y: number; vx: number; vy: number; a: number; t: number; tr: number };
+  pp?: {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    a: number;
+    t: number;
+    tr: number;
+    /* Catnya: which way she faces (sheet row) and her walk-cycle phase */
+    d?: number;
+    ph?: number;
+  };
   shd?: number;
   /* Catnya curse: seconds left on this car (its bullets do less damage) */
   crs?: number;
@@ -3282,37 +3297,56 @@ function ArenaGame() {
             ctx.stroke();
           }
           if (v.pet === "catnya") {
-            // Catnya sits on the hood (nose = -y), head forward, blinking every few seconds
-            const cim = petImg("catnya");
-            if (cim) {
-              // only the hood (front ~30% of the car): tail curl cropped off, small enough not to reach the windshield
-              const SY = 0.22,
-                hd = catHood(v.carId, car.h),
-                ch = car.h * hd.ch,
-                cw = ch / ((cim.naturalHeight * (1 - SY)) / cim.naturalWidth);
-              ctx.save();
-              ctx.translate(0, (hd.y - 0.5) * car.h);
-              ctx.rotate(Math.PI);
-              ctx.drawImage(
-                cim,
-                0,
-                cim.naturalHeight * SY,
-                cim.naturalWidth,
-                cim.naturalHeight * (1 - SY),
-                -cw / 2,
-                -ch / 2,
-                cw,
-                ch,
-              );
-              if (catBlink(t, (v.carId % 7) * 0.6)) {
-                const ey = ((0.823 - SY) / (1 - SY) - 0.5) * ch;
-                for (const ex of [-0.181, 0.18]) {
-                  ctx.fillStyle = "#241e33";
-                  ctx.beginPath();
-                  ctx.ellipse(ex * cw, ey, cw * 0.06, ch * 0.036, 0, 0, Math.PI * 2);
-                  ctx.fill();
-                }
+            // Catnya walks beside her car on the ground: she follows a spot at its side and plays the walk cycle for the way she is heading
+            const sheet = catSheetImg();
+            if (sheet) {
+              let q = v.pp;
+              const ox = car.w * 0.95 + 14,
+                oy = car.h * 0.12;
+              const tx = v.x + Math.cos(v.angle) * ox - Math.sin(v.angle) * oy,
+                ty = v.y + Math.sin(v.angle) * ox + Math.cos(v.angle) * oy;
+              if (!q) q = v.pp = { x: tx, y: ty, vx: 0, vy: 0, a: 0, t, tr: 0, d: CAT_DOWN, ph: 0 };
+              const pdt = Math.min(0.05, Math.max(0, t - q.t));
+              q.t = t;
+              if (Math.hypot(tx - q.x, ty - q.y) > 350) {
+                q.x = tx;
+                q.y = ty;
+                q.vx = q.vy = 0;
               }
+              q.vx += ((tx - q.x) * 26 - q.vx * 10) * pdt;
+              q.vy += ((ty - q.y) * 26 - q.vy * 10) * pdt;
+              q.x += q.vx * pdt;
+              q.y += q.vy * pdt;
+              const sp = Math.hypot(q.vx, q.vy);
+              const walking = sp > 14;
+              if (walking) {
+                q.d = catFacing(q.vx, q.vy, q.d ?? CAT_DOWN);
+                q.ph = ((q.ph ?? 0) + pdt * Math.min(12, 3 + sp * 0.07)) % CAT_COLS;
+              } else q.ph = 0; // standing: first frame of the way she faces
+              const fr = Math.floor(q.ph ?? 0) % CAT_COLS;
+              // sprite scale: her body is about half a car long
+              const sc = (car.h * 0.62) / CAT_CELL_H;
+              const dw = CAT_CELL_W * sc,
+                dh = CAT_CELL_H * sc;
+              const wx = q.x - v.x,
+                wy = q.y - v.y;
+              ctx.save();
+              ctx.rotate(-v.angle); // back to world axes: the sheet is drawn for a fixed screen view
+              ctx.fillStyle = "rgba(0,0,0,0.22)";
+              ctx.beginPath();
+              ctx.ellipse(wx, wy + dh * 0.28, dw * 0.34, dh * 0.12, 0, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.drawImage(
+                sheet,
+                fr * CAT_CELL_W,
+                (q.d ?? CAT_DOWN) * CAT_CELL_H,
+                CAT_CELL_W,
+                CAT_CELL_H,
+                wx - dw / 2,
+                wy - dh / 2,
+                dw,
+                dh,
+              );
               ctx.restore();
             }
           } else if (v.pet) {

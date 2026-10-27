@@ -1,27 +1,24 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronLeft, ChevronRight, Gauge, PawPrint, Square, X } from "lucide-react";
-import { PETS, buyPet, catHood, equipPet, petOf, usePets, type PetKind } from "./pets";
+import { Check, ChevronLeft, ChevronRight, PawPrint, X } from "lucide-react";
+import {
+  CAT_CELL_H,
+  CAT_CELL_W,
+  CAT_COLS,
+  CAT_DOWN,
+  CAT_SHEET,
+  PETS,
+  buyPet,
+  catFacing,
+  equipPet,
+  petOf,
+  usePets,
+  type PetKind,
+} from "./pets";
 import { allCars, carAt } from "./cars";
 import { useWallet } from "./xp";
-import tiresImg from "@/assets/race/tires.webp";
-import drumImg from "@/assets/race/drum.webp";
-import cratesImg from "@/assets/race/crates.webp";
-
-/* roadside race props that scroll past behind the car while it drives (two lanes, different order/speed) */
-const TRACK_TOP = [tiresImg, drumImg, cratesImg, drumImg, tiresImg];
-const TRACK_BOT = [cratesImg, tiresImg, drumImg, cratesImg, tiresImg];
-const Lane = ({ items, cls }: { items: string[]; cls: string }) => (
-  <div className={`pet-lane ${cls}`}>
-    {[0, 1].map((k) => (
-      <div className="pet-lane-set" key={k} aria-hidden="true">
-        {items.map((u, i) => (
-          <img key={i} src={u} alt="" />
-        ))}
-      </div>
-    ))}
-  </div>
-);
+/** Catnya in the preview is drawn this many times bigger than one sheet cell */
+const CAT_PREVIEW = 0.9;
 
 const fmt = (n: number) => n.toLocaleString("en-US");
 
@@ -30,8 +27,8 @@ export function PetsButton({ carId }: { carId: number }) {
   const [open, setOpen] = useState(false);
   const [car, setCar] = useState(carId);
   const [view, setView] = useState<PetKind>("redfly");
-  const [driving, setDriving] = useState(false);
   const flyRef = useRef<HTMLDivElement>(null);
+  const catRef = useRef<HTMLDivElement>(null);
   const { xp } = useWallet();
   const { sel, has } = usePets();
   useEffect(() => {
@@ -46,31 +43,45 @@ export function PetsButton({ carId }: { carId: number }) {
     return () => window.removeEventListener("keydown", keys, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  /* the pet circles the car and turns its face along where it flies (sprite faces down) */
+  /* the pet circles the car. Flying pets turn their face along the path (sprite faces down); Catnya walks it with her 4-way walk cycle */
   useEffect(() => {
     if (!open) return;
     let raf = 0,
       last = performance.now(),
       t = 0,
-      ang = 0;
+      ang = 0,
+      dir = CAT_DOWN,
+      ph = 0;
     const pos = (u: number): [number, number] => [Math.cos(u) * 95, Math.sin(u * 1.3) * 62];
     const loop = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000);
       last = now;
-      t += dt * (driving ? 1.5 : 1);
+      t += dt * (view === "catnya" ? 0.8 : 1);
       const [x, y] = pos(t);
       const [x2, y2] = pos(t + 0.05);
-      const aim = Math.atan2(y2 - y, x2 - x);
-      let d = aim - ang;
-      d -= Math.PI * 2 * Math.floor((d + Math.PI) / (Math.PI * 2));
-      ang += d * Math.min(1, dt * 8);
-      const el = flyRef.current;
-      if (el) el.style.transform = `translate(${x}px,${y}px) rotate(${ang - Math.PI / 2}rad)`;
+      if (view === "catnya") {
+        dir = catFacing(x2 - x, y2 - y, dir);
+        ph = (ph + dt * 9) % CAT_COLS;
+        const el = catRef.current;
+        if (el) {
+          const dw = CAT_CELL_W * CAT_PREVIEW,
+            dh = CAT_CELL_H * CAT_PREVIEW;
+          el.style.transform = `translate(${x - dw / 2}px,${y - dh / 2}px)`;
+          el.style.backgroundPosition = `${-Math.floor(ph) * dw}px ${-dir * dh}px`;
+        }
+      } else {
+        const aim = Math.atan2(y2 - y, x2 - x);
+        let d = aim - ang;
+        d -= Math.PI * 2 * Math.floor((d + Math.PI) / (Math.PI * 2));
+        ang += d * Math.min(1, dt * 8);
+        const el = flyRef.current;
+        if (el) el.style.transform = `translate(${x}px,${y}px) rotate(${ang - Math.PI / 2}rad)`;
+      }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [open, driving]);
+  }, [open, view]);
   const c = carAt(car);
   const pet = petOf(view)!;
   const step = (d: number) => setCar((i) => (i + d + allCars.length) % allCars.length);
@@ -105,12 +116,7 @@ export function PetsButton({ carId }: { carId: number }) {
               >
                 <ChevronLeft size={20} />
               </button>
-              <div className={`pet-scene ${driving ? "drive" : ""}`}>
-                <div className="pet-track" aria-hidden="true">
-                  <Lane items={TRACK_TOP} cls="top" />
-                  <div className="pet-dashes" />
-                  <Lane items={TRACK_BOT} cls="bot" />
-                </div>
+              <div className="pet-scene">
                 <div className="pet-rig">
                   <img
                     className="pet-car"
@@ -120,16 +126,17 @@ export function PetsButton({ carId }: { carId: number }) {
                   />
                   {pet.kind === "catnya" ? (
                     <div
-                      className="pet-hood"
+                      className="pet-cat"
+                      ref={catRef}
+                      role="img"
+                      aria-label={pet.name}
                       style={{
-                        width: (c.h * 1.7 * catHood(car, c.h).ch) / 1.37,
-                        left: `${c.h * 1.7 * (0.5 - catHood(car, c.h).y)}px`,
+                        width: CAT_CELL_W * CAT_PREVIEW,
+                        height: CAT_CELL_H * CAT_PREVIEW,
+                        backgroundImage: `url(${CAT_SHEET})`,
+                        backgroundSize: `${CAT_COLS * CAT_CELL_W * CAT_PREVIEW}px ${4 * CAT_CELL_H * CAT_PREVIEW}px`,
                       }}
-                    >
-                      <img src={pet.url} alt={pet.name} />
-                      <i className="eye l" />
-                      <i className="eye r" />
-                    </div>
+                    />
                   ) : (
                     <div className="pet-fly" ref={flyRef}>
                       <img src={pet.url} alt={pet.name} />
@@ -159,14 +166,6 @@ export function PetsButton({ carId }: { carId: number }) {
                 {car + 1} / {allCars.length}
               </span>
             </div>
-            <button
-              type="button"
-              className={`pet-drive ${driving ? "on" : ""}`}
-              onClick={() => setDriving((d) => !d)}
-            >
-              {driving ? <Square size={12} /> : <Gauge size={14} />}
-              {driving ? "STOP CAR" : "DRIVE CAR"}
-            </button>
             <div className="pet-list">
               {PETS.map((p) => {
                 const owned = has(p.kind);

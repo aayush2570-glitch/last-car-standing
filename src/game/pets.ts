@@ -3,8 +3,9 @@ import redfly from "@/assets/pets/redfly.webp";
 import blutle from "@/assets/pets/blutle.webp";
 import whown from "@/assets/pets/whown.webp";
 import catnya from "@/assets/pets/catnya.webp";
+import catWalk from "@/assets/pets/catnya_walk.webp";
 import { spendXp } from "@/game/xp";
-import { spriteReady, isV2 } from "@/game/cars";
+import { spriteReady } from "@/game/cars";
 
 export type PetKind = "redfly" | "blutle" | "whown" | "catnya";
 
@@ -56,7 +57,7 @@ const HALLOWEEN_PETS: PetInfo[] = [
     color: "#b44dff",
     limited: "LIMITED HALLOWEEN OFFER",
     blurb:
-      "Sits on your hood. When your HP is in the red zone, curses the enemy who hits you: their bullets do less damage and their car is slower for 30s (one time, respawn to reuse)",
+      "Walks along beside your car. When your HP is in the red zone, curses the enemy who hits you: their bullets do less damage and their car is slower for 30s (one time, respawn to reuse)",
   },
 ];
 export const PETS: PetInfo[] = HALLOWEEN_OFFER ? [...BASE_PETS, ...HALLOWEEN_PETS] : BASE_PETS;
@@ -75,8 +76,6 @@ export const PET_SIZE = 46;
 export const CURSE_TIME = 30; // seconds a cursed car's bullets stay weak
 export const CURSE_DAMAGE = 0.4; // cursed bullets do 40% damage
 export const CURSE_SPEED = 0.6; // cursed cars drive at 60% speed
-/** blink: eyes shut for a moment every few seconds (per-car phase) */
-export const catBlink = (t: number, phase: number) => (t + phase) % 4.3 < 0.17;
 
 export const randomPet = (): PetKind => PETS[Math.floor(Math.random() * PETS.length)]!.kind;
 
@@ -167,6 +166,31 @@ export function usePets() {
   return { ...s, has };
 }
 
-/** Catnya's seat on the hood: centre (fraction of car height from the nose) and height. The pointed v2 noses are narrower, so she sits a bit further back and smaller there */
-export const catHood = (carId: number, h: number) =>
-  isV2(carId) && h === 80 ? { y: 0.25, ch: 0.27 } : { y: 0.16, ch: 0.3 };
+/* ── Catnya's walk cycle: one sprite sheet, 4 rows (facing) × 6 columns (walk frames) ── */
+export const CAT_SHEET = catWalk;
+export const CAT_COLS = 6;
+export const CAT_CELL_W = 116;
+export const CAT_CELL_H = 129;
+/** sheet row for each way she can face */
+export const CAT_DOWN = 0,
+  CAT_UP = 1,
+  CAT_LEFT = 2,
+  CAT_RIGHT = 3;
+/** which way she faces for a velocity (screen axes, y down); keeps `prev` until the other axis clearly wins so she doesn't flicker on diagonals */
+export function catFacing(vx: number, vy: number, prev = CAT_DOWN): number {
+  const ax = Math.abs(vx),
+    ay = Math.abs(vy);
+  const horiz = prev === CAT_LEFT || prev === CAT_RIGHT;
+  if (horiz ? ay > ax * 1.3 : ax > ay * 1.3)
+    return horiz ? (vy > 0 ? CAT_DOWN : CAT_UP) : vx > 0 ? CAT_RIGHT : CAT_LEFT;
+  return horiz ? (vx > 0 ? CAT_RIGHT : CAT_LEFT) : vy > 0 ? CAT_DOWN : CAT_UP;
+}
+let catSheet: HTMLImageElement | undefined;
+export function catSheetImg(): HTMLImageElement | undefined {
+  if (typeof Image === "undefined") return undefined;
+  if (!catSheet) {
+    catSheet = new Image();
+    catSheet.src = catWalk;
+  }
+  return spriteReady(catSheet) ? catSheet : undefined;
+}
