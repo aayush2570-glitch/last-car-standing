@@ -3341,7 +3341,8 @@ function ArenaGame() {
                 }
               }
               // ...nor through the map: yard containers / crates, Wreck Garage wrecks and the world edge
-              const catR = ((CAT_CELL_W * (car.h * 0.3)) / CAT_CELL_H) * 0.32;
+              const catLen = g.tdm ? 0.4 : 0.35; // her length as a fraction of the car: a bit bigger in FFA, a little more in TDM
+              const catR = ((CAT_CELL_W * (car.h * catLen)) / CAT_CELL_H) * 0.32;
               const pushOut = (nx: number, ny: number, depth: number) => {
                 q.x += nx * depth;
                 q.y += ny * depth;
@@ -3394,8 +3395,8 @@ function ArenaGame() {
                 q.ph = ((q.ph ?? 0) + pdt * Math.min(12, 3 + sp * 0.07)) % CAT_COLS;
               } else q.ph = 0; // standing: first frame of the way she faces
               const fr = Math.floor(q.ph ?? 0) % CAT_COLS;
-              // sprite scale: her body is about 30% of the car length
-              const sc = (car.h * 0.3) / CAT_CELL_H;
+              // sprite scale: her body is about 35% (FFA) / 40% (TDM) of the car length
+              const sc = (car.h * catLen) / CAT_CELL_H;
               const dw = CAT_CELL_W * sc,
                 dh = CAT_CELL_H * sc;
               const wx = q.x - v.x,
