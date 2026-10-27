@@ -53,9 +53,9 @@ import { addXp, buyCar, useWallet } from "@/game/xp";
 import { PetsButton } from "@/game/PetsUI";
 import {
   PET_BOT_CHANCE,
-  CURSE_DAMAGE,
-  CURSE_SPEED,
   CURSE_TIME,
+  curseDamage,
+  curseSpeed,
   CAT_BLINK_ROWS,
   CAT_CELL_H,
   CAT_CELL_W,
@@ -2097,7 +2097,7 @@ function ArenaGame() {
             stats.speed *
             2.15 *
             (h.speedT > 0 ? 1.6 : 1) *
-            ((h.crs ?? 0) > 0 ? CURSE_SPEED : 1) *
+            ((h.crs ?? 0) > 0 ? curseSpeed(h.carId) : 1) *
             push;
           h.x += Math.sin(h.angle) * pSpeed * dt;
           h.y -= Math.cos(h.angle) * pSpeed * dt;
@@ -2341,7 +2341,7 @@ function ArenaGame() {
           (1 + 0.08 * aid) *
           speedMul *
           (bot.speedT > 0 ? 1.6 : 1) *
-          ((bot.crs ?? 0) > 0 ? CURSE_SPEED : 1);
+          ((bot.crs ?? 0) > 0 ? curseSpeed(bot.carId) : 1);
         bot.x += Math.sin(bot.angle) * bSpeed * dt;
         bot.y -= Math.cos(bot.angle) * bSpeed * dt;
         bot.trail -= dt;
@@ -2640,7 +2640,7 @@ function ArenaGame() {
               b.damage *
               (1 - target.armor / 250) *
               ((v.shd ?? 0) > 0 ? PET_SHIELD_TAKE : 1) *
-              ((shooter.crs ?? 0) > 0 ? CURSE_DAMAGE : 1);
+              ((shooter.crs ?? 0) > 0 ? curseDamage(shooter.carId) : 1);
           // Catnya: first hit taken in the red zone curses whoever shot (one time per life)
           if (
             !v.cloneOf &&

@@ -5,7 +5,7 @@ import whown from "@/assets/pets/whown.webp";
 import catnya from "@/assets/pets/catnya.webp";
 import catWalk from "@/assets/pets/catnya_walk.webp";
 import { spendXp } from "@/game/xp";
-import { spriteReady } from "@/game/cars";
+import { spriteReady, isV2 } from "@/game/cars";
 
 export type PetKind = "redfly" | "blutle" | "whown" | "catnya";
 
@@ -75,7 +75,12 @@ export const PET_FLY_RANGE = 620;
 export const PET_SIZE = 46;
 export const CURSE_TIME = 30; // seconds a cursed car's bullets stay weak
 export const CURSE_DAMAGE = 0.4; // cursed bullets do 40% damage
-export const CURSE_SPEED = 0.6; // cursed cars drive at 60% speed
+export const CURSE_SPEED = 0.6; // cursed v1 cars drive at 60% speed
+/** the curse bites v2 cars harder: their bullets do 25% damage and they drive at 45% speed */
+export const CURSE_DAMAGE_V2 = 0.25;
+export const CURSE_SPEED_V2 = 0.45;
+export const curseDamage = (carId: number) => (isV2(carId) ? CURSE_DAMAGE_V2 : CURSE_DAMAGE);
+export const curseSpeed = (carId: number) => (isV2(carId) ? CURSE_SPEED_V2 : CURSE_SPEED);
 
 export const randomPet = (): PetKind => PETS[Math.floor(Math.random() * PETS.length)]!.kind;
 
